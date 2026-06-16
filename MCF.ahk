@@ -1,5 +1,6 @@
 ﻿#Requires AutoHotkey v2.0
 #SingleInstance Force
+#Include const.ahk
 
 class Binary {
     static BinaryToStrin(bin, len, flag) {
@@ -779,6 +780,174 @@ GetMcodePtr(x64 := "", x86 := "") {
     return ptr
 }
 
+
+class StaticLibraryParser {
+    static IMAGE_ARCHIVE_START := "!<arch>`n"
+    static SIZEOF_IMAGE_ARCHIVE_MEMBER_HEADER := 60
+
+    MAGIC => StrGet(this.ptr.Ptr, 8, "UTF-8")
+
+    __New(libPath) {
+        this.firstSymbolMap  := Map()   ; Имя символа -> смещение
+        this.secondSymbolMap := Map()   ; Имя символа -> смещение
+        this.longNames       := []      ; Индексированный массив строк из Longnames Member
+        this.Members         := []      ; [{Name: "file.o", DataOffset: ..., Size: ...}, ...]
+
+        this.file := FileOpen(libPath, "r")
+        this.size := this.file.Length
+        this.ptr  := Buffer(this.size)
+        this.file.RawRead(this.ptr)
+        this.file.Close()
+
+        if (this.MAGIC != StaticLibraryParser.IMAGE_ARCHIVE_START)
+            throw Error("This is not a valid static library archive.")
+
+        this.ParseAllMembers()
+    }
+
+
+    IMAGE_ARCHIVE_MEMBER_HEADER(offset) {
+        return {
+            Name:        Trim(StrGet(this.ptr.Ptr + offset + 0,  16, "UTF-8"), " `n`r"),
+            Date:        Trim(StrGet(this.ptr.Ptr + offset + 16, 12, "UTF-8"), " `n`r"),
+            UserID:      Trim(StrGet(this.ptr.Ptr + offset + 28, 6,  "UTF-8"), " `n`r"),
+            GroupID:     Trim(StrGet(this.ptr.Ptr + offset + 34, 6,  "UTF-8"), " `n`r"),
+            Mode:        Trim(StrGet(this.ptr.Ptr + offset + 40, 8,  "UTF-8"), " `n`r"),
+            Size:        Integer(Trim(StrGet(this.ptr.Ptr + offset + 48, 10, "UTF-8"), " `n`r")),
+            EndOfHeader: Trim(StrGet(this.ptr.Ptr + offset + 58, 2,  "UTF-8"), " `n`r")
+        }
+    }
+
+
+    ; First Linker Member (имя "/") – таблица символов и смещений -> https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#first-linker-member
+    ParseFirstLinkerMember(offset) {
+        NumberOfSymbols     := this.SwapEndian(NumGet(this.ptr, offset, "UInt"))
+        currentStringOffset := offset + 4 + (NumberOfSymbols * 4)
+
+        Loop NumberOfSymbols {
+            Offsets := this.SwapEndian(NumGet(this.ptr, offset + 4 + ((A_Index - 1) * 4), "UInt"))
+            StringTable := StrGet(this.ptr.Ptr + currentStringOffset, "CP0")
+            this.firstSymbolMap[StringTable] := Offsets
+            currentStringOffset += StrLen(StringTable) + 1
+        }
+    }
+
+
+    ; Second Linker Member (имя "/" + A_index == 2) – таблица символов и смещений №2 -> https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#second-linker-member
+    ParseSecondLinkerMember(offset) {
+        offsetsArray := []
+        indicesArray := []
+
+        NumberOfMembers := NumGet(this.ptr, offset, "UInt")  ; NumberOfMembers (Little-Endian)
+        offset += 4
+        Loop NumberOfMembers {
+            offsetsArray.Push(NumGet(this.ptr, offset, "UInt")) ; массив смещений (Offsets)
+            offset += 4
+        }
+
+        NumberOfSymbols := NumGet(this.ptr, offset, "UInt") ; NumberOfSymbols (Little-Endian)
+        offset += 4
+        Loop NumberOfSymbols {
+            indicesArray.Push(NumGet(this.ptr, offset, "UShort")) ; массив индексов (Indices). Они привязывают символ к файлу из offsetsArray.
+            offset += 2
+        }
+
+        Loop NumberOfSymbols { ; StringTable (имена символов)
+            symName := StrGet(this.ptr.Ptr + offset, "CP0")
+            objOffset := offsetsArray[indicesArray[A_Index]] ; Индексы начинаются с 1 (а не с 0).
+            this.secondSymbolMap[symName] := objOffset
+            offset += StrLen(symName) + 1 ; offset == длина строки + 1 (null-терминатор)
+        }
+    }
+
+
+    ; В ar архивах если имя символа больше 16 байт то hdr.Name будут храниться отдельно -> https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#longnames-member
+    ParseLongnamesMember(offset) {
+        this.longnamesOffset := offset
+        ; end := offset + size
+        ; longNamesStr := ""
+        ; while (offset < end) {
+        ;     str := StrGet(this.ptr.Ptr + offset, "CP0")
+        ;     longNamesStr .= str
+        ;     offset += StrLen(str) + 1
+        ; }
+        ; this.longNames := StrSplit(longNamesStr, "/")
+    }
+
+
+    ResolveName(rawName) {
+        if (rawName == "" || rawName == "/" || rawName == "//")
+            return rawName
+
+        if (SubStr(rawName, 1, 1) == "/") { ; Если имя начинается со слэша + цифра (например "/15") - это длинное имя
+            nameOffset := Integer(SubStr(rawName, 2))
+            absOffset  := this.longnamesOffset + nameOffset
+            realName   := ""
+            while (true) {
+                ; По какой то причине .a и .lib отличаються друг от друга в плане завершающего строку символа, и об этом не написанно в документации microsoft.
+                ; Как я понял есть три вариации нуль-терминатора - это классика (0x00 - MSVC), и перенос строки (GNU) или слэш (GNU-терминатор перед \n).
+                b := NumGet(this.ptr, absOffset + A_Index - 1, "UChar")
+                if (b == 0 || b == 10 || b == 47) ; NUL | LF | /
+                    break
+                realName .= Chr(b)
+            }
+            return realName
+
+        } else if (SubStr(rawName, -1) == "/") { ; Если имя заканчивается на слэш (например "main.obj/") - это короткое имя
+            return SubStr(rawName, 1, StrLen(rawName) - 1)
+        } else { ; Все остальное как есть
+            return Trim(rawName)
+        }
+    }
+
+
+    ParseAllMembers() {
+        offset            := 8 ; данные идут сразу за сигнатурой "!<arch>`n"
+        linkerMemberCount := 0
+        while (offset < this.size) { ; ДОДЕЛАТЬ: У архивов ar есть подархивы (вложенные) - по хорошему, их тоже нужно достовать рекурсивно, хотя я без понятия зачем нужен архив в архиве, мда.
+            hdr        := this.IMAGE_ARCHIVE_MEMBER_HEADER(offset)
+            dataOffset := offset + StaticLibraryParser.SIZEOF_IMAGE_ARCHIVE_MEMBER_HEADER
+
+            if (hdr.Name == "/") {
+                linkerMemberCount++
+                if (linkerMemberCount == 1) { ; ДОДЕЛАТЬ: Нужно выбирапть между FirstLinkerMember и SecondLinkerMember, а не парсить оба варинанта, ибо SecondLinkerMember парсится быстрее, но при этом он есть тольо у .lib.
+                    this.ParseFirstLinkerMember(dataOffset)
+                } else if (linkerMemberCount == 2) {
+                    this.ParseSecondLinkerMember(dataOffset)
+                }
+            } else if (hdr.Name == "//") {
+                this.ParseLongnamesMember(dataOffset)
+            } else {
+                this.Members.Push({ ; ДОДЕЛАТЬ: Нужно структурировать данные под линковщик, что бы бьло проще с ними работать.
+                    Name: this.ResolveName(hdr.Name),
+                    DataOffset: dataOffset,
+                    Size: hdr.Size
+                })
+            }
+
+            ; смещение следующего файла с учетом выравнивания
+            next := dataOffset + hdr.Size
+            if (hdr.Size & 1) ; Если нечетный размер, добавляется 1 байт
+                next += 1
+            offset := next
+        }
+    }
+
+    SwapEndian(n) => ((n & 0xFF) << 24) | ((n & 0xFF00) << 8) | ((n >> 8) & 0xFF00) | ((n >> 24) & 0xFF) ; Big-Endian -> Little-Endian
+}
+
+
+GetObjectByName(lib, name) {
+    for member in lib.Members {
+        if (member.Name == name) {
+            buf := Buffer(member.Size)
+            DllCall("RtlMoveMemory", "Ptr", buf.Ptr, "Ptr", lib.ptr.Ptr + member.DataOffset, "UPtr", member.Size)
+            f := FileOpen(GLOBAL_WORKING_DIR "\temp.o", "rw")
+            f.RawWrite(buf)
+            f.Close()
+        }
+    }
+}
 
 
 
