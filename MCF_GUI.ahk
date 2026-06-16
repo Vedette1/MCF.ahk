@@ -568,15 +568,17 @@ class CustomTitleBarWindow {
 
 
     ; Когда окно развёрнуто, часть уходит за экран
-    GetMaximizedOffset() {
-        frameY  := DllCall("GetSystemMetrics", "Int", 33)  ; SM_CYFRAME
-        padding := DllCall("GetSystemMetrics", "Int", 92)  ; SM_CXPADDEDBORDER
+    GetMaximizedOffset(dpi) {
+        frameY  := DllCall("User32\GetSystemMetricsForDpi", "Int", 33, "UInt", dpi, "Int")  ; SM_CYFRAME
+        padding := DllCall("User32\GetSystemMetricsForDpi", "Int", 92, "UInt", dpi, "Int")  ; SM_CXPADDEDBORDER
         return frameY + padding  ; ~7-8 пикселей
     }
 
 
     WinMaximizedOffsetWorkArea() {
-        static minMaxOffset := this.GetMaximizedOffset()
+        dpi := DllCall("User32\GetDpiForWindow", "Ptr", this.hwnd, "UInt")
+        minMaxOffset := this.GetMaximizedOffset(dpi)
+
         monitor := DllCall("MonitorFromWindow", "Ptr", this.hwnd, "UInt", 2) ; MONITOR_DEFAULTTONEAREST
         mi := Buffer(40), NumPut("UInt", 40, mi) ; cbSize
         DllCall("GetMonitorInfo", "Ptr", monitor, "Ptr", mi)
@@ -603,9 +605,11 @@ class CustomTitleBarWindow {
         DllCall("SetWindowPos", "Ptr", this.hwnd, "Ptr", 0, "Int", 0, "Int", 0, "Int", 0, "Int", 0, "UInt", 0x0027) ; SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
     }
 
-
     ExtendFrameIntoClientArea() {
-        margins := Buffer(16), NumPut("Int", 0, "Int", 0, "Int", this.titleBarHeight, "Int", 0, margins)
+        ; высота заголовка в физические пиксели для DWM
+        dpi := DllCall("User32\GetDpiForWindow", "Ptr", this.hwnd, "UInt")
+        physicalHeight := Round(this.titleBarHeight * (dpi / 96.0))
+        margins := Buffer(16), NumPut("Int", 0, "Int", 0, "Int", physicalHeight, "Int", 0, margins)
         DllCall("dwmapi\DwmExtendFrameIntoClientArea", "Ptr", this.hwnd, "Ptr", margins)
     }
 
@@ -617,6 +621,7 @@ class CustomTitleBarWindow {
             OnMessage(0x00A5, ObjBindMethod(this, "WM_NCRBUTTONUP"))
         OnMessage(0x02A2, ObjBindMethod(this, "WM_NCMOUSELEAVE"))
         ;OnMessage(0x0005, ObjBindMethod(this, "WM_SIZE"))
+        OnMessage(0x02E0, ObjBindMethod(this, "WM_DPICHANGED")) ; обработка смены монитора/DPI, чтобы рамка перерисовывалась
     }
 
 
@@ -624,14 +629,15 @@ class CustomTitleBarWindow {
         if (hwnd != this.hwnd)
             return
 
-        if (wParam) {
-            frameX  := DllCall("GetSystemMetrics", "Int", 32) ; SM_CXFRAME
-            frameY  := DllCall("GetSystemMetrics", "Int", 33) ; SM_CYFRAME
-            padding := DllCall("GetSystemMetrics", "Int", 92) ; SM_CXPADDEDBORDER
+        if (wParam) { ; системные метрики с учетом масштаба текущего экрана
+            dpi     := DllCall("User32\GetDpiForWindow", "Ptr", hwnd, "UInt")
+            frameX  := DllCall("User32\GetSystemMetricsForDpi", "Int", 32, "UInt", dpi, "Int") ; SM_CXFRAME
+            frameY  := DllCall("User32\GetSystemMetricsForDpi", "Int", 33, "UInt", dpi, "Int") ; SM_CYFRAME
+            padding := DllCall("User32\GetSystemMetricsForDpi", "Int", 92, "UInt", dpi, "Int") ; SM_CXPADDEDBORDER
             
-            NumPut("Int", NumGet(lParam, 0, "Int") + frameX + padding, lParam, 0)   ; left
-            NumPut("Int", NumGet(lParam, 4, "Int"), lParam, 4)                      ; top (без изменений)
-            NumPut("Int", NumGet(lParam, 8, "Int") - frameX - padding, lParam, 8)   ; right
+            NumPut("Int", NumGet(lParam, 0,  "Int") + frameX + padding, lParam, 0)  ; left
+            NumPut("Int", NumGet(lParam, 4,  "Int"),  lParam, 4)                    ; top (без изменений)
+            NumPut("Int", NumGet(lParam, 8,  "Int") - frameX - padding, lParam, 8)  ; right
             NumPut("Int", NumGet(lParam, 12, "Int") - frameY - padding, lParam, 12) ; bottom
             return 0
         }
@@ -642,24 +648,23 @@ class CustomTitleBarWindow {
         if (hwnd != this.hwnd)
             return
 
-        ; DWM сначала для hover эффектов кнопок
-        if DllCall("dwmapi\DwmDefWindowProc", "Ptr", hwnd, "UInt", msg, "Ptr", wParam, "Ptr", lParam, "Ptr", lResult := Buffer(8))
+        if DllCall("dwmapi\DwmDefWindowProc", "Ptr", hwnd, "UInt", msg, "Ptr", wParam, "Ptr", lParam, "Ptr", lResult := Buffer(8)) ; DWM сначала для hover эффектов кнопок
             return NumGet(lResult, 0, "Ptr")
 
-        ; Клиентские координаты
-        this.GetCoord(lParam, &clientX, &clientY, "Client")
-
-        ; Размер окна (W / H)
-        this.GetClientRect(&width, &height)
+        this.GetCoord(lParam, &clientX, &clientY, "Client") ; Клиентские координаты
+        this.GetClientRect(&width, &height) ; Размер окна (W / H)
 
         ; Смещение GUI относительно рабочей области "A" монитора. Если окно развернуто, то весь заголовок HTCAPTION.
+        ; FIX: Зоны HitTest рассчитываются в физических координатах
+        dpi := DllCall("User32\GetDpiForWindow", "Ptr", hwnd, "UInt")
+        scale := dpi / 96.0
+        physicalTitleBarHeight := Round(this.titleBarHeight * scale)
+        borderSize := Round(5 * scale) ; Размер области resize
+
         if (this.winLimitMaximized && DllCall("IsZoomed", "Ptr", this.hwnd, "Int")) {
-            return clientY < this.titleBarHeight ? 2 : 1
+            return clientY < physicalTitleBarHeight ? 2 : 1
         }
 
-        ; Размер области resize
-        borderSize := 5
-        ;borderSize := 0
         switch {
             case clientY < borderSize && clientX < borderSize                  : return 13 ; HTTOPLEFT
             case clientY < borderSize && clientX > width - borderSize          : return 14 ; HTTOPRIGHT
@@ -728,6 +733,14 @@ class CustomTitleBarWindow {
         if (this.winLimitMaximized && wParam = 2) { ; SIZE_MAXIMIZED
             this.WinMaximizedOffsetWorkArea()
         }
+    }
+
+
+    ; Обработчик перемещения окна на монитор с другим масштабом
+    WM_DPICHANGED(wParam, lParam, msg, hwnd) {
+        if (hwnd != this.hwnd)
+            return
+        this.ExtendFrameIntoClientArea()
     }
 }
 
@@ -1281,7 +1294,7 @@ class GuiMcode {
         } else { ; Если src это код, то сперва идет компиляция, а потом линковка...
             if (this.setModeDDL.Text == "GCC") {
                 if (set.GCCPath != "" && !FileExist(set.GCCPath)) ; Проверка валидности GCC патча* (компилятора)
-                    return this.Error_log("Invalid GCC path: " set.GCCPath "`n`nSpecify the absolute path to GCC [\bin\x86_64-w64-mingw32-gcc-10.3.0.exe], or do not specify a path at all, in which case the path from the environment variables will be used (PATH).")
+                    return this.Error_log("Invalid GCC path: " set.GCCPath "`n`nSpecify the absolute path to GCC [\bin\x86_64-w64-mingw32-gcc-10.3.0.exe], or do not specify a path at all (leave the input field empty); in which case the path from the environment variables will be used (PATH).")
 
                 assemblingTime := QPC()
                 er := compil.ObjGCC()
@@ -1314,7 +1327,7 @@ class GuiMcode {
                 objdumpTime := QPC()
                 er := compil.ObjdumpGCC()
                 if (er is Error) {
-                    RTF.ReplaceSel("Invalid Objdump path: " this.objdumpPath.Text "`n`nSpecify the absolute path to Objdump [\bin\objdump.exe], or do not specify a path at all, in which case the path from the environment variables will be used (PATH).`n`n" er.Message, RTF.ErrorLog, this.objdumpRE)
+                    RTF.ReplaceSel("Invalid Objdump path: " this.objdumpPath.Text "`n`nSpecify the absolute path to Objdump [\bin\objdump.exe], or do not specify a path at all (leave the input field empty); in which case the path from the environment variables will be used (PATH).`n`n" er.Message, RTF.ErrorLog, this.objdumpRE)
                         this.waitSectionObjdump.Delete()
                         this.waitSectionObjdump.Add(["See the error below..."])
                 } else {

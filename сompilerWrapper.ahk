@@ -54,21 +54,13 @@ class Compiler {
     }
 
 
+    ; Если src это код, то создасться временный c / cpp файл (в зависимости от настроек в GUI "this.o.srcFileMode")
     CreateTempSrcFile() { ; C / Cpp / Def
         try FileDelete(Compiler.tempC)
         try FileDelete(Compiler.tempCpp)
-
-        if (FileExist(this.o.src)) {
-            SplitPath(this.o.src,,, &ext)
-            switch (ext), false {
-                case "c"  : FileAppend(FileRead(this.o.src, "UTF-8"), this.o.src := Compiler.tempC, "UTF-8")
-                case "cpp": FileAppend(FileRead(this.o.src, "UTF-8"), this.o.src := Compiler.tempCpp, "UTF-8")
-                ; default   : MsgBox('The source file you specified is not (c / cpp). Therefore, a new cpp file will be created with the contents of "' this.o.src '"...'),
-                ;             FileAppend(FileRead(this.o.src, "UTF-8"), this.o.src := Compiler.tempCpp, "UTF-8")
-            }
-        } else {
+        if !(FileExist(this.o.src)) {
             switch (this.o.srcFileMode), false {
-                case "c"   : FileAppend(this.o.src, this.o.src := Compiler.tempC, "UTF-8")
+                case "c"   : FileAppend(this.o.src, this.o.src := Compiler.tempC,   "UTF-8")
                 case "cpp" : FileAppend(this.o.src, this.o.src := Compiler.tempCpp, "UTF-8")
             }
         }
@@ -94,9 +86,9 @@ class Compiler {
 
 
     ObjGCC() {
-        if (this.o.Use == "GCC") {
+        if (this.o.Use == "GCC") { ; .exe
             return this.RunCompiler("Error compiling obj file (GCC)", this.GCC, "-c", Chr(34) this.o.src Chr(34), "-o", Chr(34) Compiler.tempO Chr(34), this.o.flagsObj, ">", Chr(34) Compiler.logErr Chr(34), "2>&1")
-        } else if (this.o.Use == "MSVC") {
+        } else if (this.o.Use == "MSVC") { ; .bat
             return this.RunCompiler("Error compiling obj file (MSVC)", this.MSVC, "&& cl /c", Chr(34) this.o.src Chr(34), "/Fo" Chr(34) Compiler.tempO Chr(34), this.o.flagsObj, ">", Chr(34) Compiler.logErr Chr(34), "2>&1")
         } else {
             return Error("The compiler is not defined:`n This mistake shouldn't happen...")
