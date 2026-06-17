@@ -142,8 +142,8 @@ class Binary {
         while (pos := RegExMatch(objdump, "is)Disassembly of section\s+(?<Name>[^\r\n:]+):\s*(?<Content>.*?)(?=Disassembly of section|\z)", &m, pos)) {
             rawName  := Trim(m[1])
             content  := Trim(m[0], " `t`r`n")
-            result[rawName] := content
-            properties.Push(rawName)
+            result[A_Index " " rawName] := content
+            properties.Push(A_Index " " rawName)
             pos += StrLen(m[0])
         }
         ;result["ALL"] := objdump
@@ -704,11 +704,11 @@ class COFF {
         for sec in this.sections {
             hex := sec.SizeOfRawData == 0 ? "Empty section" : Binary.BinaryToStrin(this.ptr.Ptr + sec.PointerToRawData, sec.SizeOfRawData, 12)
             if (dump) {
-                m[sec.Name] := {hex: hex, dump: sec.SizeOfRawData == 0 ? "Empty section" : Binary.HexToASCII(this.ptr.Ptr + sec.PointerToRawData, sec.SizeOfRawData, bytesPerLine)}
+                m[A_Index " " sec.Name] := {hex: hex, dump: sec.SizeOfRawData == 0 ? "Empty section" : Binary.HexToASCII(this.ptr.Ptr + sec.PointerToRawData, sec.SizeOfRawData, bytesPerLine)}
             } else {
-                m[sec.Name] := {hex: hex}
+                m[A_Index " " sec.Name] := {hex: hex}
             }
-            prop.Push(sec.Name)
+            prop.Push(A_Index " " sec.Name)
         }
         return m
     }
@@ -935,13 +935,6 @@ class StaticLibraryParser {
 
     SwapEndian(n) => ((n & 0xFF) << 24) | ((n & 0xFF00) << 8) | ((n >> 8) & 0xFF00) | ((n >> 24) & 0xFF) ; Big-Endian -> Little-Endian
 }
-
-; parser := StaticLibraryParser("D:\GCC_tdm64-gcc-9.2.0\lib\libctf.a")
-; parser := StaticLibraryParser("D:\Visual Studio\VC\Tools\MSVC\14.43.34808\lib\x64\clang_rt.stats_client-x86_64.lib")
-; parser := StaticLibraryParser("D:\GCC_tdm64-gcc-9.2.0\lib\gcc\x86_64-w64-mingw32\10.3.0\libssp.a")
-; dbg parser.firstSymbolMap, parser.Members
-; GetObjectByName(parser, "ssp.o")
-
 
 
 GetObjectByName(lib, name) {
