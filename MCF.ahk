@@ -936,6 +936,13 @@ class StaticLibraryParser {
     SwapEndian(n) => ((n & 0xFF) << 24) | ((n & 0xFF00) << 8) | ((n >> 8) & 0xFF00) | ((n >> 24) & 0xFF) ; Big-Endian -> Little-Endian
 }
 
+; parser := StaticLibraryParser("D:\GCC_tdm64-gcc-9.2.0\lib\libctf.a")
+; parser := StaticLibraryParser("D:\Visual Studio\VC\Tools\MSVC\14.43.34808\lib\x64\clang_rt.stats_client-x86_64.lib")
+; parser := StaticLibraryParser("D:\GCC_tdm64-gcc-9.2.0\lib\gcc\x86_64-w64-mingw32\10.3.0\libssp.a")
+; dbg parser.firstSymbolMap, parser.Members
+; GetObjectByName(parser, "ssp.o")
+
+
 
 GetObjectByName(lib, name) {
     for member in lib.Members {
