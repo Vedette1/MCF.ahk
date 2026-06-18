@@ -774,6 +774,7 @@ class GuiMcode {
         this.ctrl := Custom_Ctrl()
         this.CreateMainGUI()
         this.CreateSettingsGUI()
+        this.CreateSetPathGUI()
         this.CreateCOFFinfoGUI()
 
         this.Events()
@@ -948,13 +949,15 @@ class GuiMcode {
         this.importDlls          := this.CreateRichEdit(this.settingsG, "Consolas", 11, "0x11b1a9", "0x101010", "x710 y351 w439 h224", Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS", GuiMcode.IMPORT_DLL), "|"), "`n"))
 
         this.settingsG.SetFont("s9", "Consolas")
-        this.showTempDir := this.settingsG.AddButton("x10 y5 h22", "Show temp dir")
+        this.showTempDir    := this.settingsG.AddButton("x10 y5 h22", "Show temp dir")
+        this.showSetPathGUI := this.settingsG.AddButton("x128 y5 h22", "Change paths")
 
-        this.settingsG.AddText("x0   y175 w1159 h2  Background005343")
+        this.settingsG.AddText("x0   y175 w1159 h2   Background005343")
         this.settingsG.AddText("x330 y175 w2    h600 Background005343")
         this.settingsG.AddText("x700 y175 w2    h600 Background005343")
         this.settingsG.AddText("x866 y31  w2    h144 Background005343")
 
+        this.ctrl.ClrBtn(this.showSetPathGUI,          "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: "0x2a2766"})
         this.ctrl.ClrBtn(this.showTempDir,             "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: "0x2a2766"})
         this.ctrl.ClrBtn(this.browseMSVCX64,           "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: "0x1f3a3a"})
         this.ctrl.ClrBtn(this.browseMSVCX86,           "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: "0x1f3a3a"})
@@ -980,6 +983,25 @@ class GuiMcode {
         EditBorder(this.ignoreSections)
         EditBorder(this.importDlls)
         EditBorder(this.multilineOutputLength)
+    }
+
+
+    CreateSetPathGUI() {
+        this.pathG := Gui()
+        this.pathG.BackColor := 0x060606
+        CustomTitleBarWindow(this.pathG, "005343",,,,true)
+        this.pathG.SetFont("s11", "Consolas")
+
+        this.pathG.AddText("x10 y43  c0x12abd1", "Temp Dir:")
+        this.pathG.AddText("x10 y77  c0x12abd1", "Settings ini:")
+        this.pathG.AddText("x10 y111 c0x12abd1", "Output Dir:")
+        this.setPathTempDir     := this.pathG.AddEdit("x121 y41  w720 h24 Background101010 c11b1a9", GLOBAL_WORKING_DIR)
+        this.setPathSettingsIni := this.pathG.AddEdit("x121 y75  w720 h24 Background101010 c11b1a9", GLOBAL_INI_FILE)
+        this.setPathOutputDir   := this.pathG.AddEdit("x121 y109 w720 h24 Background101010 c11b1a9", "This is not currently implemented...") ; GLOBAL_WORKING_OUTPUT_DIR
+        this.pathG.AddText("x10 y145 c0xc44444", "IMPORTANT: If you change the paths, you need to close this window and restart the application for it to work correctly.").SetFont("s9")
+        EditBorder(this.setPathTempDir)
+        EditBorder(this.setPathSettingsIni)
+        EditBorder(this.setPathOutputDir)
     }
 
 
@@ -1179,7 +1201,9 @@ class GuiMcode {
             IniWrite(Join(StrSplit(RegExReplace(this.importDlls.Text, "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS")
         })
 
-        this.showTempDir.OnEvent("Click", (*) => Run(GLOBAL_WORKING_DIR))
+        this.showTempDir.OnEvent("Click",    (*) => Run(GLOBAL_WORKING_DIR))
+        this.showSetPathGUI.OnEvent("Click", (*) => this.pathG.Show("w851 h146"))
+
         this.browseMSVCX64.OnEvent("Click", (*) => this.MSVCPathX64.Text    := (sel := FileSelect(,,, "Exe File (*.exe)")) ? sel : this.MSVCPathX64.Text)
         this.browseMSVCX86.OnEvent("Click", (*) => this.MSVCPathX86.Text    := (sel := FileSelect(,,, "Exe File (*.exe)")) ? sel : this.MSVCPathX86.Text)
         this.browseGCC.OnEvent("Click",     (*) => this.GCCPath.Text        := (sel := FileSelect(,,, "Exe File (*.exe)")) ? sel : this.GCCPath.Text)
@@ -1197,6 +1221,14 @@ class GuiMcode {
         this.removeDbgSection.OnEvent("Click",        (*) => this.removeDbgSection.Text    := this.removeDbgSection.Text    ? "" : "✔")
         this.optimizeSizeMcode.OnEvent("Click",       (*) => this.optimizeSizeMcode.Text   := this.optimizeSizeMcode.Text   ? "" : "✔")
         this.removeLastAlignment.OnEvent("Click",     (*) => this.removeLastAlignment.Text := this.removeLastAlignment.Text ? "" : "✔")
+
+        ;####################################################### Path ###########################################################
+
+        this.pathG.OnEvent("Close", (*) {
+            RegWrite(this.setPathTempDir.Text,     "REG_SZ", "HKCU\Software\MCF", "TEMP_DIR")
+            RegWrite(this.setPathSettingsIni.Text, "REG_SZ", "HKCU\Software\MCF", "TEMP_SETTINGS_INI")
+            RegWrite(this.setPathOutputDir.Text,   "REG_SZ", "HKCU\Software\MCF", "TEMP_OUTPUT")
+        })
 
         ;####################################################### COFF info ######################################################
 
