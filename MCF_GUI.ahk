@@ -10,8 +10,7 @@
 
 
 
-
-Join(arr, sep) => (s := '', i := 0, [(_ => (s .= arr[++i] . sep, i < arr.Length))*], Trim(s, sep))
+Join(arr, sep) => (arr.Length) ? ((s := '', i := 0, [(_ => (s .= arr[++i] . sep, i < arr.Length))*], Trim(s, sep))) : ""
 QPC() {
     static c := 0, f := (DllCall("QueryPerformanceFrequency", "int64*", &c), c /= 1000)
     return (DllCall("QueryPerformanceCounter", "int64*", &c), c / f)
@@ -767,7 +766,8 @@ class GuiMcode {
     static mainColor   := "005343"
     static decor       := "005343"
 
-    static ARR_FLAGS := ["GCC (x64)", "GCC (x64) Mcode", "GCC (x86)", "GCC (x86) Mcode", "MSVC (x64_x86)"]
+    static ARR_FLAGS  := ["GCC (x64)", "GCC (x64) Mcode", "GCC (x86)", "GCC (x86) Mcode", "MSVC (x64_x86)"]
+    static IMPORT_DLL := "User32|Kernel32|ntdll|Gdi32|Advapi32|msvcrt|Shell32|Ole32|OleAut32|Comctl32|Shlwapi|Ws2_32|Iphlpapi|Version|Secur32|Winmm|Imm32|Uxtheme|Setupapi|Crypt32"
 
     __New() {
         DarkMode()
@@ -945,7 +945,7 @@ class GuiMcode {
         this.removeLastAlignment := this.settingsG.AddButton("x710 y221 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "REMOVE_LAST_ALIGNMENT", "")), this.settingsG.AddText("x738 y221 c0x12abd1", "Remove last alignment")
         this.entryPoint          := this.settingsG.AddEdit("x845 y253 w66 h22   Background101010 c11b1a9 Center Number", IniRead(GLOBAL_INI_FILE, "SETTINGS", "ENTRY_POINT", 0x0)), this.settingsG.AddText("x710 y255 c0x12abd1", "Entry Point:")
         this.ignoreSections      := this.settingsG.AddEdit("x845 y285 w304 h24  Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "IGNORE_SECTION", ".xdata|.pdata|.rdata$zzz")), this.settingsG.AddText("x710 y287 c0x12abd1", "Ignore Sections:")
-        this.importDlls          := this.CreateRichEdit(this.settingsG, "Consolas", 11, "0x11b1a9", "0x101010", "x710 y351 w439 h224", Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS", "User32|Kernel32|msvcrt"), "|"), "`n"))
+        this.importDlls          := this.CreateRichEdit(this.settingsG, "Consolas", 11, "0x11b1a9", "0x101010", "x710 y351 w439 h224", Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS", GuiMcode.IMPORT_DLL), "|"), "`n"))
 
         this.settingsG.SetFont("s9", "Consolas")
         this.showTempDir := this.settingsG.AddButton("x10 y5 h22", "Show temp dir")
@@ -1257,6 +1257,9 @@ class GuiMcode {
     GenerateMcode(src) {
         this.objdump         := unset
         prop                 := []
+        this.SetTextColorRE(0x11b1a9, this.hexRE)
+        this.SetTextColorRE(0x11b1a9, this.base64RE)
+        this.SetTextColorRE(0x11b1a9, this.compressRE)
         this.infoRE.Text     := ""
         this.warningRE.Text  := ""
         this.objdumpRE.Text  := ""
@@ -1359,28 +1362,47 @@ class GuiMcode {
             this.cf := COFF(Compiler.tempO, importDll, ignoreSec, fullOffsetTable, ePoint ?? 0)
             this.mcode := this.cf.Linker()
 
+            ; Визуальная подсветка самой короткой строки MCode.
+            minLen := Min(StrLen(this.mcode.hex), StrLen(this.mcode.base64), StrLen(this.mcode.compress))
+            for key, re in Map("hex", this.hexRE, "base64", this.base64RE, "compress", this.compressRE) {
+                if (StrLen(this.mcode.%key%) = minLen) {
+                    this.SetTextColorRE("0x12abd1", re)
+                }
+            }
+
             if (this.displayHexMcode.Text && StrLen(this.mcode.hex) <= 500000) {
                 this.hexRE.Text := this.mcode.hex
             } else if !(this.displayHexMcode.Text) {
                 this.hexRE.Text := "The Hex Mcode will not be displayed visually (you can change this in the settings), but you can still copy it."
-            } else this.hexRE.Text := "The Hex Mcode won't be displayed visually because it exceeds 1,000,000 characters. However, you can still copy it."
+            } else this.hexRE.Text := "The Hex Mcode won't be displayed visually because it exceeds 500,000 characters. However, you can still copy it."
 
             if (this.displayBase64Mcode.Text && StrLen(this.mcode.base64) <= 500000) {
                 this.base64RE.Text := this.mcode.base64
             } else if !(this.displayBase64Mcode.Text) {
                 this.base64RE.Text := "The Base64 Mcode will not be displayed visually (you can change this in the settings), but you can still copy it."
-            } else this.base64RE.Text := "The Base64 Mcode won't be displayed visually because it exceeds 1,000,000 characters. However, you can still copy it."
+            } else this.base64RE.Text := "The Base64 Mcode won't be displayed visually because it exceeds 500,000 characters. However, you can still copy it."
             
             if (this.displayCompressMcode.Text && StrLen(this.mcode.compress) <= 500000) {
                 this.compressRE.Text := this.mcode.compress
             } else if !(this.displayCompressMcode.Text) {
                 this.compressRE.Text := "The Compress Mcode will not be displayed visually (you can change this in the settings), but you can still copy it."
-            } else this.compressRE.Text := "The Compress Mcode won't be displayed visually because it exceeds 1,000,000 characters. However, you can still copy it."
+            } else this.compressRE.Text := "The Compress Mcode won't be displayed visually because it exceeds 500,000 characters. However, you can still copy it."
 
             RTF.ReplaceSel(this.mcode.table, RTF.VsCodeAhk, this.infoRE)
             RTF.ReplaceSel("Linker is completed in " QPC() - linkerTime " milliseconds...`n", RTF.Log, this.warningRE,,, true)
-            RTF.ReplaceSel("Mcode was successfully built in " QPC() - totalTime " milliseconds!", RTF.Log, this.warningRE,,, true)
+            RTF.ReplaceSel("Mcode was successfully built in " QPC() - totalTime " milliseconds!`n`n", RTF.Log, this.warningRE,,, true)
+            if (this.mcode.dbg) ; Отладочная информация
+                RTF.ReplaceSel(this.mcode.dbg, RTF.ErrorLog, this.warningRE,,, true)
         }
+    }
+
+
+    SetTextColorRE(color := 0x11b1a9, RE) {
+        cf := Buffer(116, 0), NumPut("UInt", 116, cf, 0) ; CHARFORMAT2
+        NumPut("UInt", RGBtoBGR(color), cf, 20)  ; crTextColor
+        NumPut("UInt", 0x40000000, cf, 4) ; CFM_COLOR | dwMask
+        SendMessage(0x0444, 0x0004, cf.Ptr,, RE.Hwnd) ; EM_SETCHARFORMAT | SCF_ALL
+        RGBtoBGR(rgbClr) => ((rgbClr & 0xFF) << 16) | (((rgbClr >> 8) & 0xFF) << 8) | ((rgbClr >> 16) & 0xFF)
     }
 
 

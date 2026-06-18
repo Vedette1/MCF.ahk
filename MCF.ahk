@@ -246,6 +246,7 @@ class COFF {
         this.fullOffsetTable := fullOffsetTable ; Если fullOffsetTable == false, то линковщик вернет смещения только нужных символов (функции / глобалки*), в ином случае будет полная таблица всех символов.
         this.entryPoint      := entryPoint      ; Точка входа.
 
+        this.dbgLogInfo      := ""
         this.exportedSymbols := Map() ; Таблица смещений всех функций / секций / глобальных переменных, и тд. которые есть в конечном Mcode.
         this.VAreloc         := []    ; Массив VA релокаций - VirtualAlloc + RVA (известно только при запуске). В 99% случаев VA релокаций не будет в конечном Mcode.
         this.sectionFilter   := []    ; Массив 0 && 1. Фильтрует бесполезные секции при линковке, что бы не захватывать их в конечный Mcode (например это .xdata | .pdata).
@@ -487,9 +488,9 @@ class COFF {
         ;     }
         ; }
 
-
-        layout        := []
-        currentOffset := this.entryPoint <= 0 ? 0 : this.entryPoint <= 0xFF ? 2 : this.entryPoint <= 0xFFFFFFFF ? 5 : 0
+        this.dbgLogInfo := ""
+        layout          := []
+        currentOffset   := this.entryPoint <= 0 ? 0 : this.entryPoint <= 0xFF ? 2 : this.entryPoint <= 0xFFFFFFFF ? 5 : 0
 
         for i, sec in this.sections {
             if (this.sectionFilter[i])
@@ -570,6 +571,7 @@ class COFF {
                 
                 if (!found) {
                     IAT .= "UNKNOWN_DLL:" exp.func ":" exp.patchOffset ":" disp "|"
+                    this.dbgLogInfo .= "`tsymbol: " exp.func " -> offset: " exp.patchOffset "`n"
                 }
             }
         }
@@ -613,7 +615,8 @@ class COFF {
             hex:      Binary.BinaryToStrin(mcode, mcode.Size, 12)           . RTrim(IAT, "|"),
             base64:   Binary.BinaryToStrin(mcode, mcode.Size, 1)            . RTrim(IAT, "|"),
             compress: Binary.BinaryToCompressedBase64(mcode, mcode.Size, 2) . RTrim(IAT, "|"),
-            table:    RTrim(exportedSymbolsStr, "`n") ; this.exportedSymbols
+            table:    RTrim(exportedSymbolsStr, "`n"), ; this.exportedSymbols
+            dbg:      this.dbgLogInfo != "" ? "Unauthorized imports found:`n`n" this.dbgLogInfo '`nYou probably did not specify the required DLLs for the functions used in the Mcode. If you see a strange function name* that starts with "__" or "??", then your Mcode will not work, because those are <inline> functions, and this is not currently supported.' : ""
         }
     }
 
