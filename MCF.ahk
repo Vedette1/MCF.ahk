@@ -205,14 +205,42 @@ class COFF {
         "IMAGE_FILE_BYTES_REVERSED_HI",       0x8000,
     )
 
+    static IMAGE_SYMBOL_STORAGE_CLASS := Map(
+        "IMAGE_SYM_CLASS_END_OF_FUNCTION", -1,
+        "IMAGE_SYM_CLASS_NULL",             0,
+        "IMAGE_SYM_CLASS_AUTOMATIC",        1,
+        "IMAGE_SYM_CLASS_EXTERNAL",         2,
+        "IMAGE_SYM_CLASS_STATIC",           3,
+        "IMAGE_SYM_CLASS_REGISTER",         4,
+        "IMAGE_SYM_CLASS_EXTERNAL_DEF",     5,
+        "IMAGE_SYM_CLASS_LABEL",            6,
+        "IMAGE_SYM_CLASS_UNDEFINED_LABEL",  7,
+        "IMAGE_SYM_CLASS_MEMBER_OF_STRUCT", 8,
+        "IMAGE_SYM_CLASS_ARGUMENT",         9,
+        "IMAGE_SYM_CLASS_STRUCT_TAG",       10,
+        "IMAGE_SYM_CLASS_MEMBER_OF_UNION",  11,
+        "IMAGE_SYM_CLASS_UNION_TAG",        12,
+        "IMAGE_SYM_CLASS_TYPE_DEFINITION",  13,
+        "IMAGE_SYM_CLASS_UNDEFINED_STATIC", 14,
+        "IMAGE_SYM_CLASS_ENUM_TAG",         15,
+        "IMAGE_SYM_CLASS_MEMBER_OF_ENUM",   16,
+        "IMAGE_SYM_CLASS_REGISTER_PARAM",   17,
+        "IMAGE_SYM_CLASS_BIT_FIELD",        18,
+        "IMAGE_SYM_CLASS_BLOCK",            100,
+        "IMAGE_SYM_CLASS_FUNCTION",         101,
+        "IMAGE_SYM_CLASS_END_OF_STRUCT",    102,
+        "IMAGE_SYM_CLASS_FILE",             103,
+        "IMAGE_SYM_CLASS_SECTION",          104,
+        "IMAGE_SYM_CLASS_WEAK_EXTERNAL",    105,
+        "IMAGE_SYM_CLASS_CLR_TOKEN",        107,
+    )
+
     static SIZEOF_IMAGE_SECTION_HEADER := 40
     static SIZEOF_IMAGE_FILE_HEADER    := 20
     static SIZEOF_IMAGE_SYMBOL         := 18
     static SIZEOF_IMAGE_RELOCATION     := 10
     static IMAGE_FILE_MACHINE_I386     := 0x14c  ; x86
     static IMAGE_FILE_MACHINE_AMD64    := 0x8664 ; x64
-
-    static IMAGE_SYM_CLASS_FILE := 103
 
     MACHINE                 => this.IMAGE_FILE_HEADER(0).Machine              ; 0
     NUMBER_OF_SECTIONS      => this.IMAGE_FILE_HEADER(0).NumberOfSections     ; 2
@@ -246,7 +274,10 @@ class COFF {
         this.fullOffsetTable := fullOffsetTable ; Если fullOffsetTable == false, то линковщик вернет смещения только нужных символов (функции / глобалки*), в ином случае будет полная таблица всех символов.
         this.entryPoint      := entryPoint      ; Точка входа.
 
-        this.dbgLogInfo      := ""
+        this.dbgLogInfo        := ""
+        this.importedSymbols   := [] ; Все импортируемые символы из dll. Они помечаються как __imp_.
+        this.unresolvedSymbols := [] ; Все неразрешённые символы, которые нужно будет искать в статических библиотеках.
+
         this.exportedSymbols := Map() ; Таблица смещений всех функций / секций / глобальных переменных, и тд. которые есть в конечном Mcode.
         this.VAreloc         := []    ; Массив VA релокаций - VirtualAlloc + RVA (известно только при запуске). В 99% случаев VA релокаций не будет в конечном Mcode.
         this.sectionFilter   := []    ; Массив 0 && 1. Фильтрует бесполезные секции при линковке, что бы не захватывать их в конечный Mcode (например это .xdata | .pdata).
@@ -340,7 +371,7 @@ class COFF {
         while (symbolIndex < this.NUMBER_OF_SYMBOLS) {
             nextSymbol := this.IMAGE_SYMBOL(this.POINTER_TO_SYMBOL_TABLE + (symbolIndex * COFF.SIZEOF_IMAGE_SYMBOL))
             this.symbolsMap[symbolIndex] := nextSymbol
-            if (nextSymbol.StorageClass == COFF.IMAGE_SYM_CLASS_FILE) {
+            if (nextSymbol.StorageClass == COFF.IMAGE_SYMBOL_STORAGE_CLASS.Get("IMAGE_SYM_CLASS_FILE")) {
                 symbolIndex++ ; Имя файла хранится в auxiliary записи, которая следует сразу за основным символом (Зачем это надо? Для красоты!)
                 continue
             }
@@ -443,21 +474,21 @@ class COFF {
         if (this.is64) {
             switch relocType {
                 case IMAGE_REL_AMD64_ADDR64   : NumPut("Int64", targetAddress, mcode, patchAddress), this.VAreloc.Push({offset: patchAddress, size: 8})
-                case IMAGE_REL_AMD64_ADDR32   : NumPut("UInt", targetAddress, mcode, patchAddress),  this.VAreloc.Push({offset: patchAddress, size: 4})
-                case IMAGE_REL_AMD64_ADDR32NB : NumPut("UInt", targetAddress, mcode, patchAddress)
-                case IMAGE_REL_AMD64_REL32    : NumPut("Int", targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 4), mcode, patchAddress)
-                case IMAGE_REL_AMD64_REL32_1  : NumPut("Int", targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 5), mcode, patchAddress)
-                case IMAGE_REL_AMD64_REL32_2  : NumPut("Int", targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 6), mcode, patchAddress)
-                case IMAGE_REL_AMD64_REL32_3  : NumPut("Int", targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 7), mcode, patchAddress)
-                case IMAGE_REL_AMD64_REL32_4  : NumPut("Int", targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 8), mcode, patchAddress)
-                case IMAGE_REL_AMD64_REL32_5  : NumPut("Int", targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 9), mcode, patchAddress)
+                case IMAGE_REL_AMD64_ADDR32   : NumPut("UInt",  targetAddress, mcode, patchAddress),  this.VAreloc.Push({offset: patchAddress, size: 4})
+                case IMAGE_REL_AMD64_ADDR32NB : NumPut("UInt",  targetAddress, mcode, patchAddress)
+                case IMAGE_REL_AMD64_REL32    : NumPut("Int",   targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 4), mcode, patchAddress)
+                case IMAGE_REL_AMD64_REL32_1  : NumPut("Int",   targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 5), mcode, patchAddress)
+                case IMAGE_REL_AMD64_REL32_2  : NumPut("Int",   targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 6), mcode, patchAddress)
+                case IMAGE_REL_AMD64_REL32_3  : NumPut("Int",   targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 7), mcode, patchAddress)
+                case IMAGE_REL_AMD64_REL32_4  : NumPut("Int",   targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 8), mcode, patchAddress)
+                case IMAGE_REL_AMD64_REL32_5  : NumPut("Int",   targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 9), mcode, patchAddress)
                 default: throw Error(Format("Unsupported relocation type [x64]: 0x{:04X}", relocType))
             }
         } else {
             switch relocType {
                 case IMAGE_REL_I386_DIR32   : NumPut("UInt", targetAddress, mcode, patchAddress), this.VAreloc.Push({offset: patchAddress, size: 4})
                 case IMAGE_REL_I386_DIR32NB : NumPut("UInt", targetAddress, mcode, patchAddress)
-                case IMAGE_REL_I386_REL32   : NumPut("Int", targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 4), mcode, patchAddress)
+                case IMAGE_REL_I386_REL32   : NumPut("Int",  targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 4), mcode, patchAddress)
                 default: throw Error(Format("Unsupported relocation type [x86]: 0x{:04X}", relocType))
             }
         }
@@ -781,359 +812,4 @@ GetMcodePtr(x64 := "", x86 := "") {
         }
     }
     return ptr
-}
-
-
-class StaticLibraryParser {
-    static IMAGE_ARCHIVE_START := "!<arch>`n"
-    static SIZEOF_IMAGE_ARCHIVE_MEMBER_HEADER := 60
-
-    MAGIC => StrGet(this.ptr.Ptr, 8, "UTF-8")
-
-    __New(libPath) {
-        this.firstSymbolMap  := Map()   ; Имя символа -> смещение
-        this.secondSymbolMap := Map()   ; Имя символа -> смещение
-        this.longNames       := []      ; Индексированный массив строк из Longnames Member
-        this.Members         := []      ; [{Name: "file.o", DataOffset: ..., Size: ...}, ...]
-
-        this.file := FileOpen(libPath, "r")
-        this.size := this.file.Length
-        this.ptr  := Buffer(this.size)
-        this.file.RawRead(this.ptr)
-        this.file.Close()
-
-        if (this.MAGIC != StaticLibraryParser.IMAGE_ARCHIVE_START)
-            throw Error("This is not a valid static library archive.")
-
-        this.ParseAllMembers()
-    }
-
-
-    IMAGE_ARCHIVE_MEMBER_HEADER(offset) {
-        return {
-            Name:        Trim(StrGet(this.ptr.Ptr + offset + 0,  16, "UTF-8"), " `n`r"),
-            Date:        Trim(StrGet(this.ptr.Ptr + offset + 16, 12, "UTF-8"), " `n`r"),
-            UserID:      Trim(StrGet(this.ptr.Ptr + offset + 28, 6,  "UTF-8"), " `n`r"),
-            GroupID:     Trim(StrGet(this.ptr.Ptr + offset + 34, 6,  "UTF-8"), " `n`r"),
-            Mode:        Trim(StrGet(this.ptr.Ptr + offset + 40, 8,  "UTF-8"), " `n`r"),
-            Size:        Integer(Trim(StrGet(this.ptr.Ptr + offset + 48, 10, "UTF-8"), " `n`r")),
-            EndOfHeader: Trim(StrGet(this.ptr.Ptr + offset + 58, 2,  "UTF-8"), " `n`r")
-        }
-    }
-
-
-    ; First Linker Member (имя "/") – таблица символов и смещений -> https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#first-linker-member
-    ParseFirstLinkerMember(offset) {
-        NumberOfSymbols     := this.SwapEndian(NumGet(this.ptr, offset, "UInt"))
-        currentStringOffset := offset + 4 + (NumberOfSymbols * 4)
-
-        Loop NumberOfSymbols {
-            Offsets := this.SwapEndian(NumGet(this.ptr, offset + 4 + ((A_Index - 1) * 4), "UInt"))
-            StringTable := StrGet(this.ptr.Ptr + currentStringOffset, "CP0")
-            this.firstSymbolMap[StringTable] := Offsets
-            currentStringOffset += StrLen(StringTable) + 1
-        }
-    }
-
-
-    ; Second Linker Member (имя "/" + A_index == 2) – таблица символов и смещений №2 -> https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#second-linker-member
-    ParseSecondLinkerMember(offset) {
-        offsetsArray := []
-        indicesArray := []
-
-        NumberOfMembers := NumGet(this.ptr, offset, "UInt")  ; NumberOfMembers (Little-Endian)
-        offset += 4
-        Loop NumberOfMembers {
-            offsetsArray.Push(NumGet(this.ptr, offset, "UInt")) ; массив смещений (Offsets)
-            offset += 4
-        }
-
-        NumberOfSymbols := NumGet(this.ptr, offset, "UInt") ; NumberOfSymbols (Little-Endian)
-        offset += 4
-        Loop NumberOfSymbols {
-            indicesArray.Push(NumGet(this.ptr, offset, "UShort")) ; массив индексов (Indices). Они привязывают символ к файлу из offsetsArray.
-            offset += 2
-        }
-
-        Loop NumberOfSymbols { ; StringTable (имена символов)
-            symName := StrGet(this.ptr.Ptr + offset, "CP0")
-            objOffset := offsetsArray[indicesArray[A_Index]] ; Индексы начинаются с 1 (а не с 0).
-            this.secondSymbolMap[symName] := objOffset
-            offset += StrLen(symName) + 1 ; offset == длина строки + 1 (null-терминатор)
-        }
-    }
-
-
-    ; В ar архивах если имя символа больше 16 байт то hdr.Name будут храниться отдельно -> https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#longnames-member
-    ParseLongnamesMember(offset) {
-        this.longnamesOffset := offset
-        ; end := offset + size
-        ; longNamesStr := ""
-        ; while (offset < end) {
-        ;     str := StrGet(this.ptr.Ptr + offset, "CP0")
-        ;     longNamesStr .= str
-        ;     offset += StrLen(str) + 1
-        ; }
-        ; this.longNames := StrSplit(longNamesStr, "/")
-    }
-
-
-    ResolveName(rawName) {
-        if (rawName == "" || rawName == "/" || rawName == "//")
-            return rawName
-
-        if (SubStr(rawName, 1, 1) == "/") { ; Если имя начинается со слэша + цифра (например "/15") - это длинное имя
-            nameOffset := Integer(SubStr(rawName, 2))
-            absOffset  := this.longnamesOffset + nameOffset
-            realName   := ""
-            while (true) {
-                ; По какой то причине .a и .lib отличаються друг от друга в плане завершающего строку символа, и об этом не написанно в документации microsoft.
-                ; Как я понял есть три вариации нуль-терминатора - это классика (0x00 - MSVC), и перенос строки (GNU) или слэш (GNU-терминатор перед \n).
-                b := NumGet(this.ptr, absOffset + A_Index - 1, "UChar")
-                if (b == 0 || b == 10 || b == 47) ; NUL | LF | /
-                    break
-                realName .= Chr(b)
-            }
-            return realName
-
-        } else if (SubStr(rawName, -1) == "/") { ; Если имя заканчивается на слэш (например "main.obj/") - это короткое имя
-            return SubStr(rawName, 1, StrLen(rawName) - 1)
-        } else { ; Все остальное как есть
-            return Trim(rawName)
-        }
-    }
-
-
-    ParseAllMembers() {
-        offset            := 8 ; данные идут сразу за сигнатурой "!<arch>`n"
-        linkerMemberCount := 0
-        while (offset < this.size) { ; ДОДЕЛАТЬ: У архивов ar есть подархивы (вложенные) - по хорошему, их тоже нужно достовать рекурсивно, хотя я без понятия зачем нужен архив в архиве, мда.
-            hdr        := this.IMAGE_ARCHIVE_MEMBER_HEADER(offset)
-            dataOffset := offset + StaticLibraryParser.SIZEOF_IMAGE_ARCHIVE_MEMBER_HEADER
-
-            if (hdr.Name == "/") {
-                linkerMemberCount++
-                if (linkerMemberCount == 1) { ; ДОДЕЛАТЬ: Нужно выбирапть между FirstLinkerMember и SecondLinkerMember, а не парсить оба варинанта, ибо SecondLinkerMember парсится быстрее, но при этом он есть тольо у .lib.
-                    this.ParseFirstLinkerMember(dataOffset)
-                } else if (linkerMemberCount == 2) {
-                    this.ParseSecondLinkerMember(dataOffset)
-                }
-            } else if (hdr.Name == "//") {
-                this.ParseLongnamesMember(dataOffset)
-            } else {
-                this.Members.Push({ ; ДОДЕЛАТЬ: Нужно структурировать данные под линковщик, что бы бьло проще с ними работать.
-                    Name: this.ResolveName(hdr.Name),
-                    DataOffset: dataOffset,
-                    Size: hdr.Size
-                })
-            }
-
-            ; смещение следующего файла с учетом выравнивания
-            next := dataOffset + hdr.Size
-            if (hdr.Size & 1) ; Если нечетный размер, добавляется 1 байт
-                next += 1
-            offset := next
-        }
-    }
-
-    SwapEndian(n) => ((n & 0xFF) << 24) | ((n & 0xFF00) << 8) | ((n >> 8) & 0xFF00) | ((n >> 24) & 0xFF) ; Big-Endian -> Little-Endian
-}
-
-
-GetObjectByName(lib, name) {
-    for member in lib.Members {
-        if (member.Name == name) {
-            buf := Buffer(member.Size)
-            DllCall("RtlMoveMemory", "Ptr", buf.Ptr, "Ptr", lib.ptr.Ptr + member.DataOffset, "UPtr", member.Size)
-            f := FileOpen(GLOBAL_WORKING_DIR "\temp.o", "rw")
-            f.RawWrite(buf)
-            f.Close()
-        }
-    }
-}
-
-
-
-; Не используется...
-class PEImports {
-    static IMAGE_DOS_SIGNATURE           := 0x5A4D
-    static IMAGE_NT_SIGNATURE            := 0x00004550
-    static IMAGE_NT_OPTIONAL_HDR64_MAGIC := 0x20B
-    static IMAGE_NT_OPTIONAL_HDR32_MAGIC := 0x10B
-    static SIZEOF_IMAGE_DATA_DIRECTORY   := 8   ; RVA (4) + Size (4)
-    static OFFSET_TO_OPTIONAL_HEADER     := 24  ; после Signature + FileHeader
-
-    static SIZEOF_IMAGE_SECTION_HEADER    := 40
-    static SIZEOF_IMAGE_IMPORT_DESCRIPTOR := 20
-
-    E_MAGIC  => this.IMAGE_DOS_HEADER(0).e_magic
-    E_LFANEW => this.IMAGE_DOS_HEADER(0).e_lfanew
-
-    NUMBER_OF_SECTIONS      => this.IMAGE_NT_HEADERS(this.E_LFANEW).NumberOfSections
-    SIZE_OF_OPTIONAL_HEADER => this.IMAGE_NT_HEADERS(this.E_LFANEW).SizeOfOptionalHeader
-    MAGIC                   => this.IMAGE_NT_HEADERS(this.E_LFANEW).Magic
-
-
-    __New(path) {
-        this.sections := []
-        this.imports  := []
-        this.file     := FileOpen(path, "r")
-        this.size     := this.file.Length
-        this.ptr      := Buffer(this.size)
-        this.file.RawRead(this.ptr)
-        this.file.Close()
-
-        if (this.E_MAGIC != PEImports.IMAGE_DOS_SIGNATURE)
-            throw Error("Not a valid DOS file (MZ signature missing)...")
-
-        if (NumGet(this.ptr, this.E_LFANEW, "UInt") != PEImports.IMAGE_NT_SIGNATURE)
-            throw Error("Not a valid PE file (PE signature missing)...")
-
-        this.is64           := this.Magic == PEImports.IMAGE_NT_OPTIONAL_HDR64_MAGIC
-        dataDirectoryOffset := this.E_LFANEW + PEImports.OFFSET_TO_OPTIONAL_HEADER + (this.is64 ? 112 : 96) + PEImports.SIZEOF_IMAGE_DATA_DIRECTORY
-        this.ImportRVA      := NumGet(this.ptr, dataDirectoryOffset, "UInt") ; IMAGE_DATA_DIRECTORY : VirtualAddress
-
-        this.ReadSections()
-        this.ReadImports()
-    }
-
-
-    IMAGE_DOS_HEADER(offset) {
-        ; https://docs.rs/pelite/latest/pelite/image/struct.IMAGE_DOS_HEADER.html
-        return {
-            e_magic: NumGet(this.ptr, offset + 0, "UShort"),
-            ;...
-            e_lfanew: NumGet(this.ptr, offset + 60, "UInt"),
-        }
-    }
-
-
-    IMAGE_NT_HEADERS(offset) { ; IMAGE_NT_HEADERS64 || IMAGE_NT_HEADERS32
-        ; https://docs.rs/pelite/latest/pelite/pe32/image/type.IMAGE_NT_HEADERS.html
-        return {
-            ;Signature:           NumGet(this.ptr, offset + 0,  "UInt")
-            ;Machine:             NumGet(this.ptr, offset + 4,  "UShort"),
-            NumberOfSections:     NumGet(this.ptr, offset + 6,  "UShort"),
-            SizeOfOptionalHeader: NumGet(this.ptr, offset + 20, "UShort"),
-            Magic:                NumGet(this.ptr, offset + 24, "UShort"),
-            ;...
-        }
-    }
-
-
-    IMAGE_SECTION_HEADER(offset) {
-        return {
-            ;Name:                Name,
-            VirtualSize:          NumGet(this.ptr, offset + 8,  "UInt"), ; PhysicalAddress / VirtualSize
-            VirtualAddress:       NumGet(this.ptr, offset + 12, "UInt"),
-            SizeOfRawData:        NumGet(this.ptr, offset + 16, "UInt"),
-            PointerToRawData:     NumGet(this.ptr, offset + 20, "UInt"),
-            ;...
-        }
-    }
-
-
-
-    IMAGE_IMPORT_DESCRIPTOR(offset) {
-        return {
-            OriginalFirstThunk: NumGet(this.ptr, offset + 0,  "UInt"),
-            TimeDateStamp:      NumGet(this.ptr, offset + 4,  "UInt"),
-            ForwarderChain:     NumGet(this.ptr, offset + 8,  "UInt"),
-            NameRVA:            NumGet(this.ptr, offset + 12, "UInt"), ; Name / NameRVA
-            FirstThunk:         NumGet(this.ptr, offset + 16, "UInt"),
-        }
-    }
-
-
-    ; Перевод адреса из памяти (RVA) в физическое смещение в файле
-    RvaToOffset(rva) {
-        if (rva == 0)
-            return 0
-            
-        for sec in this.sections {
-            if (rva >= sec.VirtualAddress && rva < sec.VirtualAddress + sec.VirtualSize) { ; Если RVA попадает в диапазон этой секции
-                return rva - sec.VirtualAddress + sec.PointerToRawData
-            }
-        }
-        return 0
-    }
-
-
-    ReadSections() {
-        sectionOffset := this.e_lfanew + 24 + this.SIZE_OF_OPTIONAL_HEADER ; Секции начинаются сразу после Optional Header
-        loop this.NUMBER_OF_SECTIONS {
-            this.sections.Push(this.IMAGE_SECTION_HEADER(sectionOffset))
-            sectionOffset += PEImports.SIZEOF_IMAGE_SECTION_HEADER
-        }
-    }
-
-
-    ReadImports() {
-        if (this.ImportRVA == 0)
-            return []
-        importOffset := this.RvaToOffset(this.ImportRVA)
-
-        while (true) {
-            functions := []
-            importDesc := this.IMAGE_IMPORT_DESCRIPTOR(importOffset)
-
-            if (importDesc.OriginalFirstThunk == 0 && importDesc.NameRVA == 0 && importDesc.FirstThunk == 0) ; Массив заканчивается нулевой структурой
-                break
-
-            dllName := StrGet(this.ptr.Ptr + this.RvaToOffset(importDesc.NameRVA), "UTF-8") ; Имя DLL
-
-            ; Некоторые компиляторы не заполняют OriginalFirstThunk, по крайней мере так написано в интернете - в таком случае нужно читать из FirstThunk
-            thunkOffset := this.RvaToOffset(importDesc.OriginalFirstThunk ? importDesc.OriginalFirstThunk : importDesc.FirstThunk)
-
-            ; Идем по массиву Thunk Data (4 байта для 32 / 8 байт для 64)
-            while (true) {
-                thunkValue := this.is64 ? NumGet(this.ptr, thunkOffset, "UInt64") : NumGet(this.ptr, thunkOffset, "UInt")
-                if (thunkValue == 0)
-                    break
-
-                if ((thunkValue >> (this.is64 ? 63 : 31)) & 1) { ; isOrdinal... Импортируется ли функция по Ординалу или по Имени (самый старший бит = 1)
-                    ; functions.Push("Ordinal: " ordinalNum)
-                    functions.Push(thunkValue & 0xFFFF) ; ordinalNum... Если функция импортируется без имени, только по номеру
-                } else {
-                    ; Если по имени, RVA указывает на структуру IMAGE_IMPORT_BY_NAME. Первые 2 байта это Hint (не надо) далее идет имя строки...
-                    funcNameRVA := thunkValue & 0x7FFFFFFF
-                    funcNameOffset := this.RvaToOffset(funcNameRVA) + 2
-                    funcName := StrGet(this.ptr.Ptr + funcNameOffset, "UTF-8")
-                    functions.Push(funcName)
-                }
-                thunkOffset += this.is64 ? 8 : 4
-            }
-            this.imports.Push({dll: dllName, functions: functions})
-            importOffset += PEImports.SIZEOF_IMAGE_IMPORT_DESCRIPTOR
-        }
-    }
-}
-
-
-/**
- * - Я без понятия как получать именна dll, кроме как собрать exe с пустой main и прочитать все импорты...
- * - Вроде бы это работает неплохо, но нужно тестить...
- * |user32:MessageBoxA:2
- * UPD:: Идея нуждается в доработке. Возможно этот код будет удален как и PEImports
- */
-GetIAT(objPath, pePath) {
-    IAT := [], STR := "|"
-    exports := COFF(objPath).export
-    imports := PEImports(pePath).imports
-    ;dbg exports, imports
-    for exp in exports {
-        for imp in imports {
-            for func in imp.functions {
-                if (exp.func == func) {
-                    IAT.Push({dll: imp.dll, func: exp.func, reloc: exp.reloc})
-                }
-            }
-        }
-    }
-
-    loop (IAT.Length) {
-        STR .= StrReplace(IAT[A_Index].dll, ".dll") ":" IAT[A_Index].func ":" IAT[A_Index].reloc "|"
-    }
-
-    return {arr: IAT, str: RTrim(STR, "|")}
 }

@@ -97,5 +97,5 @@ class Compiler {
 
     DllGCC(newDllF) => this.RunCompiler("Error compiling dll file", this.GCC, "-shared",          Chr(34) this.o.src Chr(34), "-o", Chr(34) newDllF Chr(34), this.o.flagsDll, "2>", Chr(34) Compiler.logErr Chr(34))
     ExeGCC(newExeF) => this.RunCompiler("Error compiling exe file", this.GCC,                     Chr(34) this.o.src Chr(34), "-o", Chr(34) newExeF Chr(34), this.o.flagsExe, "2>", Chr(34) Compiler.logErr Chr(34))
-    ObjdumpGCC()    => this.RunCompiler("Objdump failed", this.disassembler, this.o.flagsObjdump, Chr(34) Compiler.tempO Chr(34), ">",  Chr(34) Compiler.tempAsm Chr(34), "2>", Chr(34) Compiler.logErr Chr(34))
+    ObjdumpGCC(pathObj)    => this.RunCompiler("Objdump failed", this.disassembler, this.o.flagsObjdump, Chr(34) pathObj Chr(34), ">",  Chr(34) Compiler.tempAsm Chr(34), "2>", Chr(34) Compiler.logErr Chr(34))
 }

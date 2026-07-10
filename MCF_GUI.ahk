@@ -767,7 +767,7 @@ class GuiMcode {
     static decor       := "005343"
 
     static ARR_FLAGS  := ["GCC (x64)", "GCC (x64) Mcode", "GCC (x86)", "GCC (x86) Mcode", "MSVC (x64_x86)"]
-    static IMPORT_DLL := "User32|Kernel32|ntdll|Gdi32|Advapi32|msvcrt|Shell32|Ole32|OleAut32|Comctl32|Shlwapi|Ws2_32|Iphlpapi|Version|Secur32|Winmm|Imm32|Uxtheme|Setupapi|Crypt32"
+    static IMPORT_DLL := "User32|Kernel32|ntdll|Gdi32|Advapi32|msvcrt|Shell32|Ole32|OleAut32|Comctl32|Shlwapi|Ws2_32|Iphlpapi|Version|Secur32|Winmm|Imm32|Uxtheme|Setupapi|Crypt32|ucrtbase"
 
     __New() {
         DarkMode()
@@ -1204,8 +1204,8 @@ class GuiMcode {
         this.showTempDir.OnEvent("Click",    (*) => Run(GLOBAL_WORKING_DIR))
         this.showSetPathGUI.OnEvent("Click", (*) => this.pathG.Show("w851 h146"))
 
-        this.browseMSVCX64.OnEvent("Click", (*) => this.MSVCPathX64.Text    := (sel := FileSelect(,,, "Exe File (*.exe)")) ? sel : this.MSVCPathX64.Text)
-        this.browseMSVCX86.OnEvent("Click", (*) => this.MSVCPathX86.Text    := (sel := FileSelect(,,, "Exe File (*.exe)")) ? sel : this.MSVCPathX86.Text)
+        this.browseMSVCX64.OnEvent("Click", (*) => this.MSVCPathX64.Text    := (sel := FileSelect(,,, "Bat File (*.bat)")) ? sel : this.MSVCPathX64.Text)
+        this.browseMSVCX86.OnEvent("Click", (*) => this.MSVCPathX86.Text    := (sel := FileSelect(,,, "Bat File (*.bat)")) ? sel : this.MSVCPathX86.Text)
         this.browseGCC.OnEvent("Click",     (*) => this.GCCPath.Text        := (sel := FileSelect(,,, "Exe File (*.exe)")) ? sel : this.GCCPath.Text)
         this.browseObjdump.OnEvent("Click", (*) => this.objdumpPath.Text    := (sel := FileSelect(,,, "Exe File (*.exe)")) ? sel : this.objdumpPath.Text)
 
@@ -1323,9 +1323,9 @@ class GuiMcode {
 
         ; Если src это COFF (.o|.obj), то линковщик соберет Mcode без зависимостей от компилятора. COFF копируеться - задел на будущее...
         if (srcIsCOFF) {
-            try FileCopy(src, GLOBAL_WORKING_DIR "\*.o", true)
-            Objdump()
-            Linker()
+            try FileCopy(src, GLOBAL_WORKING_DIR "\temp.o", true)
+            Objdump(src)
+            Linker(src)
         } else { ; Если src это код, то сперва идет компиляция, а потом линковка...
             if (this.setModeDDL.Text == "GCC") {
                 if (set.GCCPath != "" && !FileExist(set.GCCPath)) ; Проверка валидности GCC патча* (компилятора)
@@ -1337,8 +1337,8 @@ class GuiMcode {
                     return this.Error_log(er.Message)
 
                 RTF.ReplaceSel("Compilation is completed in " QPC() - assemblingTime " milliseconds...`n", RTF.Log, this.warningRE,,, true)
-                Objdump()
-                Linker()
+                Objdump(Compiler.tempO)
+                Linker(Compiler.tempO)
             } else {
                 if (set.MSVCPath != "" && !FileExist(set.MSVCPath)) ; Проверка валидности MSVC патча* (компилятора)
                     return this.Error_log("Invalid MSVC path: " set.MSVCPath "`n`nSpecify the absolute path to MSVC [\VC\Auxiliary\Build\vcvars64.bat].")
@@ -1349,18 +1349,18 @@ class GuiMcode {
                     return this.Error_log(er.Message)
 
                 RTF.ReplaceSel("Compilation is completed in " QPC() - assemblingTime " milliseconds...`n", RTF.Log, this.warningRE,,, true)
-                Objdump()
-                Linker()
+                Objdump(Compiler.tempO)
+                Linker(Compiler.tempO)
             }
         }
 
 
         ; Objdump не обязателен для работы кода. Это просто дополнение (дизассемблер) для удобства понимания того, как именно компилятор собирает код.
         ; В дальнейшем нужно доделать DumpBin (MSVC), а возможно лучше будет написать свой собственный дизассемблер на AHK, но это мутороное занятие...
-        Objdump() {
+        Objdump(path) {
             if (this.displayObjdump.Text) {
                 objdumpTime := QPC()
-                er := compil.ObjdumpGCC()
+                er := compil.ObjdumpGCC(path)
                 if (er is Error) {
                     RTF.ReplaceSel("Invalid Objdump path: " this.objdumpPath.Text "`n`nSpecify the absolute path to Objdump [\bin\objdump.exe], or do not specify a path at all (leave the input field empty); in which case the path from the environment variables will be used (PATH).`n`n" er.Message, RTF.ErrorLog, this.objdumpRE)
                         this.waitSectionObjdump.Delete()
@@ -1389,9 +1389,9 @@ class GuiMcode {
             }
         }
 
-        Linker() {
+        Linker(path) {
             linkerTime := QPC()
-            this.cf := COFF(Compiler.tempO, importDll, ignoreSec, fullOffsetTable, ePoint ?? 0)
+            this.cf := COFF(path, importDll, ignoreSec, fullOffsetTable, ePoint ?? 0)
             this.mcode := this.cf.Linker()
 
             ; Визуальная подсветка самой короткой строки MCode.
