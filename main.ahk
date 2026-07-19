@@ -2,17 +2,18 @@
 #SingleInstance Force
 
 #DllLoad "msftedit.dll"
-
 #Include const.ahk
 #Include сompilerWrapper.ahk
 #Include IDE.ahk
 #Include MCF_GUI.ahk
 
+global new_thread_check_update := Worker(FileRead("threads\CheckForUpdates.ahk"),, "MCF check update") ; новый поток для проверки ласт версии (релиза) MCF.
+
 
 class main {
     __New() {
         global GLOBAL_INI_FILE, GLOBAL_WORKING_DIR, GLOBAL_WORKING_OUTPUT_DIR
-        DirCreate(GLOBAL_WORKING_DIR)
+        ; DirCreate(GLOBAL_WORKING_DIR)
         ; DirCreate(GLOBAL_WORKING_OUTPUT_DIR)
 
         defaultTempDir     := GLOBAL_WORKING_DIR
@@ -26,6 +27,7 @@ class main {
             DirCreate(newTempDirPath)
             GLOBAL_WORKING_DIR := newTempDirPath
         } catch {
+            DirCreate(defaultTempDir)
             GLOBAL_WORKING_DIR := defaultTempDir
         }
 
@@ -41,14 +43,10 @@ class main {
             GLOBAL_INI_FILE := defaultSettingsIni
         }
 
-        try {
-            DirCreate(newOutputDir)
-            GLOBAL_WORKING_OUTPUT_DIR := newOutputDir
-        } catch {
-            GLOBAL_WORKING_OUTPUT_DIR := defaultOutputDir
+        if (IniRead(GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE", false)) {
+            new_thread_check_update.AsyncCall("CheckForUpdates", "Vedette1", "MCF.ahk", GLOBAL_MCF_VERSION, false)
         }
-
-        m := GuiMcode()
+        GuiMcode()
     }
 }
 main()

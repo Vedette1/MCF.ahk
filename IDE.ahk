@@ -87,6 +87,7 @@ class RTF {
         {color: 0xF759EA, patterns: ["\[|\]"], type: "regex"},
         {color: 0x1D99FF, patterns: ["\{|}"],  type: "regex"},
         {color: 0xFFFFFF, patterns: ["\.|\!|\||\^|\;|\:|\~"], type: "regex"},
+        {color: 0x589d38, patterns: ["//.*$"], type: "regex"},
     ]
 
 

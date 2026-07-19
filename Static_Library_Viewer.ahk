@@ -307,7 +307,7 @@ class StaticLibraryParser {
         if (result.IsThin) {
             try {
                 FileCopy(result.Member.Path, outPath, true)
-                return outPath
+                return GetFullPathName(outPath)
             } catch as er {
                 throw Error("Failed to copy thin member (" result.Member.Path "): " er.Message)
             }
@@ -322,6 +322,13 @@ class StaticLibraryParser {
             return outPath
         } catch as er {
             throw Error("Failed to create (.o /.obj) file... " er.Message)
+        }
+
+        GetFullPathName(path) {
+            size := DllCall("GetFullPathName", "Str", path, "UInt", 0, "Ptr", 0, "Ptr", 0)
+            buf  := Buffer(size * 2)
+            DllCall("GetFullPathName", "Str", path, "UInt", size, "Ptr", buf, "Ptr", 0)
+            return StrGet(buf)
         }
     }
 
