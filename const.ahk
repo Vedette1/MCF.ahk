@@ -2,7 +2,7 @@
 global GLOBAL_WORKING_OUTPUT_DIR := GLOBAL_WORKING_DIR "\Output"
 global GLOBAL_INI_FILE           := GLOBAL_WORKING_DIR "\settings.ini"
 global GLOBAL_MCF_LINKER_LOG     := GLOBAL_WORKING_DIR "\MCF_Linker_log.log"
-global GLOBAL_MCF_VERSION        := "1.0.2"
+global GLOBAL_MCF_VERSION        := "1.0.3"
 global GLOBAL_AHK_VERSION        := "AutoHotkey_H 2.1-alpha.18"
 
 
