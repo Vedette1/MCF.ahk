@@ -1578,7 +1578,7 @@ class GuiMcode {
         this.btnLoadSL := this.slpG.AddButton(, "Download") ; x890 y41  w100 h24
         this.btnSaveSL := this.slpG.AddButton(, "Extract")
         this.slpG.SetFont("s11")
-        this.loadSL  := this.slpG.AddEdit("c11b1a9 Background101010", "(.a / .lib) File")
+        this.loadSL  := this.slpG.AddEdit("c11b1a9 Background101010", IniRead(GLOBAL_INI_FILE, "SETTINGS", "LOAD_SLP_STATIC_LIB", "(.a / .lib) File"))
         this.saveSL  := this.slpG.AddEdit("c11b1a9 Background101010")
 
         this.lvAR.ModifyCol(1, "380 Text Left")
@@ -1872,6 +1872,10 @@ class GuiMcode {
         this.copyMcodeHex.OnEvent("Click", (*) => (this.HasOwnProp("hexDump") && A_Clipboard := this.hexDump[this.waitSectionHexDumpBtn.Text].hex))
 
         ;####################################################### SLP ######################################################
+
+        this.slpG.OnEvent("Close", (*) {
+            IniWrite(this.loadSL.Text, GLOBAL_INI_FILE, "SETTINGS", "LOAD_SLP_STATIC_LIB")
+        })
 
         this.slpG.OnEvent("Size", GuiReSizer)
         this.btnLoadSL.OnEvent("Click", (*) {

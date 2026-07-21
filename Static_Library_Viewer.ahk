@@ -394,6 +394,19 @@ class MultiMap extends Map {
     }
 }
 
+; dirPath := "D:\GCC_tdm64-gcc-9.2.0\x86_64-w64-mingw32\lib"
+
+; Loop Files, dirPath "\*.a" {
+;     SLP := StaticLibraryParser(A_LoopFileFullPath)
+
+;     for symName, info in SLP.ResolvedSymbols {
+;         if (symName == "__mingw_raise_matherr") {
+;             dbg symName "`n" info.ObjFile "`n" info.DataOffset "`n" info.Size "`n" info.IsThin "`n" A_LoopFileFullPath
+;             return
+;         }
+;     }
+; }
+
 
 /*
 class StaticLibraryParser {
