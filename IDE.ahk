@@ -120,6 +120,11 @@ class RTF {
         {color: 0x1D99FF, patterns: ["\{|}"],  type: "regex"}
     ]
 
+    static Comments := [
+        {color: 0x11b1a9},
+        {color: 0x589d38, patterns: ["//.*$"], type: "regex"},
+    ]
+
 
 
     static EscapeRTF(text) => StrReplace(StrReplace(StrReplace(text, "\", "\\"), "{", "\{"), "}", "\}")

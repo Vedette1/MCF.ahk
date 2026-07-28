@@ -333,6 +333,34 @@ class StaticLibraryParser {
     }
 
 
+    ; Извлекает конкретный объектный файл из архива в память (Buffer).
+    ExtractMemberToBuffer(objName) {
+        result := this._FindMember(objName)
+        if !result
+            throw Error("Object not found: " objName)
+
+        if (result.IsThin) {
+            try {
+                f := FileOpen(result.Member.Path, "r")
+                buf := Buffer(f.Length)
+                f.RawRead(buf)
+                f.Close()
+                return buf
+            } catch as er {
+                throw Error("Failed to read thin member (" result.Member.Path "): " er.Message)
+            }
+        }
+
+        try {
+            destBuf := Buffer(result.Member.Size)
+            DllCall("RtlMoveMemory", "Ptr", destBuf, "Ptr", result.Owner.ptr.Ptr + result.Member.DataOffset, "UPtr", result.Member.Size)
+            return destBuf
+        } catch as er {
+            throw Error("Failed to extract member to buffer... " er.Message)
+        }
+    }
+
+
     _FindMember(objName) {
         for member in this.Members {
             if (member.Name = objName)
@@ -394,18 +422,76 @@ class MultiMap extends Map {
     }
 }
 
-; dirPath := "D:\GCC_tdm64-gcc-9.2.0\x86_64-w64-mingw32\lib"
 
-; Loop Files, dirPath "\*.a" {
-;     SLP := StaticLibraryParser(A_LoopFileFullPath)
+; symbols := ["_errno"]
+; paths   := ["D:\GCC_tdm64-gcc-9.2.0\lib\gcc\x86_64-w64-mingw32\10.3.0", "D:\GCC_tdm64-gcc-9.2.0\x86_64-w64-mingw32\lib"]
+; dbg FindSymbolsInArchives(symbols, paths, true)
 
-;     for symName, info in SLP.ResolvedSymbols {
-;         if (symName == "__mingw_raise_matherr") {
-;             dbg symName "`n" info.ObjFile "`n" info.DataOffset "`n" info.Size "`n" info.IsThin "`n" A_LoopFileFullPath
-;             return
-;         }
-;     }
-; }
+/**
+ * Ищет символы в статических библиотеках (.a, .lib).
+ * @param {Array} symbolsToFind - Массив строк с именами символов (например: ["___chkstk_ms", "_main"])
+ * @param {Array} pathsToSearch - Массив путей. Может содержать как пути к файлам, так и к директориям.
+ * @param {Integer} findAll - Если false, поиск остановится, когда будет найдено хотя бы одно совпадение для каждого символа из массива. Если true — переберет все файлы целиком.
+ * @returns {Array} - Массив объектов.
+ */
+FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll := false) {
+    ParseArchive(filePath, &targetSymbols, &results, findAll) {
+        try {
+            SLP := StaticLibraryParser(filePath)
+            for symName, info in SLP.ResolvedSymbols {
+                if targetSymbols.Has(symName) {
+                    results.Push({Symbol: symName, ObjFile: info.ObjFile, DataOffset: info.DataOffset, Size: info.Size, IsThin: info.IsThin, ArchivePath: filePath})
+                    if (!findAll) {
+                        targetSymbols.Delete(symName)
+                        if (targetSymbols.Count == 0)
+                            break
+                    }
+                }
+            }
+        } catch as er {
+            throw Error("ERROR FindSymbolsInArchives`nFile parsing error " filePath "`n" er.Message)
+        }
+    }
+
+    GetExtension(path) {
+        SplitPath(path,,, &ext)
+        return ext
+    }
+
+    results := []
+    targetSymbols := Map()
+    for sym in symbolsToFind {
+        targetSymbols[sym] := true
+    }
+    
+    ProcessFile := (filePath) => ParseArchive(filePath, &targetSymbols, &results, findAll)
+    for currentPath in pathsToSearch {
+        attr := FileExist(currentPath)
+        if (!attr)
+            continue
+            
+        if InStr(attr, "D") {
+            Loop Files, currentPath "\*.*", "F" {
+                ext := A_LoopFileExt
+                if (ext = "a" || ext = "lib") {
+                    ProcessFile(A_LoopFileFullPath)
+                    if (!findAll && targetSymbols.Count == 0)
+                        return results
+                }
+            }
+        } else {
+            ext := GetExtension(currentPath)
+            if (ext = "a" || ext = "lib") {
+                ProcessFile(currentPath)
+                if (!findAll && targetSymbols.Count == 0)
+                    return results
+            }
+        }
+    }
+    return results
+}
+
+
 
 
 /*

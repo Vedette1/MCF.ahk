@@ -1257,9 +1257,15 @@ class GuiMcode {
     static mainColor   := "005343"
     static decor       := "005343"
 
-    static ARR_FLAGS       := ["GCC (x64)", "GCC (x64) Mcode", "GCC (x86)", "GCC (x86) Mcode", "MSVC (x64_x86)"]
-    static IMPORT_DLL      := "User32|Kernel32|ntdll|Gdi32|Advapi32|msvcrt|Shell32|Ole32|OleAut32|Comctl32|Shlwapi|Ws2_32|Iphlpapi|Version|Secur32|Winmm|Imm32|Uxtheme|Setupapi|Crypt32|ucrtbase"
-    static DYNAMIC_LINKING := "malloc|memset|memcpy"
+    static ARR_FLAGS        := ["GCC (x64)", "GCC (x64) Mcode", "GCC (x86)", "GCC (x86) Mcode", "MSVC (x64_x86)"]
+    static IMPORT_DLL       := "User32|Kernel32|ntdll|Gdi32|Advapi32|msvcrt|Shell32|Ole32|OleAut32|Comctl32|Shlwapi|Ws2_32|Iphlpapi|Version|Secur32|Winmm|Imm32|Uxtheme|Setupapi|Crypt32|ucrtbase"
+    static DYNAMIC_LINKING  := "malloc|memset|memcpy"
+    static STATIC_LIBRARIES := "
+    (
+        // For example ["ctrl + /" comment / uncomment]:
+        D:\GCC_tdm64-gcc-9.2.0\x86_64-w64-mingw32\lib\libmingwex.a
+        D:\GCC_tdm64-gcc-9.2.0\lib\gcc\x86_64-w64-mingw32\10.3.0\libgcc.a
+    )"
 
     __New() {
         DarkMode()
@@ -1423,25 +1429,26 @@ class GuiMcode {
         this.settingsG.AddText("x10 y77  c0x9AA7B0", "MSVC x86 path:")
         this.settingsG.AddText("x10 y111 c0x9AA7B0", "GCC path:")
         this.settingsG.AddText("x10 y145 c0x9AA7B0", "Objdump path:")
-        this.settingsG.AddText("x900 y51 c12abd1", ASCII_MCODE).SetFont("s10")
+        this.settingsG.AddText("x1001 y51 c12abd1", ASCII_MCODE).SetFont("s10")
 
-        this.MSVCPathX64   := this.settingsG.AddEdit("x130 y41  w596 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X64", "\VC\Auxiliary\Build\vcvars64.bat"))
-        this.MSVCPathX86   := this.settingsG.AddEdit("x130 y75  w596 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X86", "\VC\Auxiliary\Build\vcvars32.bat"))
-        this.GCCPath       := this.settingsG.AddEdit("x130 y109 w596 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "GCC_PATH",      "\bin\x86_64-w64-mingw32-gcc-10.3.0.exe [change]"))
-        this.objdumpPath   := this.settingsG.AddEdit("x130 y143 w596 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_PATH",  "\bin\objdump.exe [change]"))
+        this.MSVCPathX64   := this.settingsG.AddEdit("x130 y41  w697 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X64", "\VC\Auxiliary\Build\vcvars64.bat"))
+        this.MSVCPathX86   := this.settingsG.AddEdit("x130 y75  w697 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X86", "\VC\Auxiliary\Build\vcvars32.bat"))
+        this.GCCPath       := this.settingsG.AddEdit("x130 y109 w697 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "GCC_PATH",      "\bin\x86_64-w64-mingw32-gcc-10.3.0.exe [change]"))
+        this.objdumpPath   := this.settingsG.AddEdit("x130 y143 w697 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_PATH",  "\bin\objdump.exe [change]"))
         this.settingsG.SetFont("s9", "Consolas")
-        this.browseMSVCX64 := this.settingsG.AddButton("x736 y41  w120 h24", "Browse MSVC x64")
-        this.browseMSVCX86 := this.settingsG.AddButton("x736 y75  w120 h24", "Browse MSVC x86")
-        this.browseGCC     := this.settingsG.AddButton("x736 y109 w120 h24", "Browse GCC")
-        this.browseObjdump := this.settingsG.AddButton("x736 y143 w120 h24", "Browse Objdump")
+        this.browseMSVCX64 := this.settingsG.AddButton("x837 y41  w120 h24", "Browse MSVC x64")
+        this.browseMSVCX86 := this.settingsG.AddButton("x837 y75  w120 h24", "Browse MSVC x86")
+        this.browseGCC     := this.settingsG.AddButton("x837 y109 w120 h24", "Browse GCC")
+        this.browseObjdump := this.settingsG.AddButton("x837 y143 w120 h24", "Browse Objdump")
         this.settingsG.SetFont("s11", "Consolas")
 
-        this.settingsG.AddText("x100 y191 c0x9AA7B0", "General settings")
-        this.settingsG.AddText("x10  y560 c12abd1", "MCF version: " GLOBAL_MCF_VERSION)
-        this.settingsG.AddText("x450 y191 c0x9AA7B0", "Compiler settings")
-        this.settingsG.AddText("x870 y191 c0x9AA7B0", "Linker settings")
-        this.settingsG.AddText("x860 y356 c0x9AA7B0", "===== Import Dll =====")
-        this.settingsG.AddText("x399 y356 c0x9AA7B0", "===== Dynamic linking symbols =====")
+        this.settingsG.AddText("x100 y191  c0x9AA7B0", "General settings")
+        this.settingsG.AddText("x10  y590  c12abd1",   "MCF version: " GLOBAL_MCF_VERSION)
+        this.settingsG.AddText("x450 y191  c0x9AA7B0", "Compiler settings")
+        this.settingsG.AddText("x921 y191  c0x9AA7B0", "Linker settings")
+        this.settingsG.AddText("x480 y356  c0x9AA7B0", "Static Lib (.a / .lib)")
+        this.settingsG.AddText("x830 y356  c0x9AA7B0", "Dynamic linking symbols")
+        this.settingsG.AddText("x1100 y356 c0x9AA7B0", "Import Dll")
 
         this.displayObjdump          := this.settingsG.AddButton("x20 y223 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_OBJDUMP",            "✔")), this.settingsG.AddText("x48 y223 c0x12abd1", "Display disassembler")
         this.objdumpHighlighting     := this.settingsG.AddButton("x20 y255 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_HIGHLIGHTING",       "✔")), this.settingsG.AddText("x48 y255 c0x12abd1", "Disassembler highlighting")
@@ -1450,7 +1457,7 @@ class GuiMcode {
         this.displayCompressMcode    := this.settingsG.AddButton("x20 y351 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_COMPRESS_MCODE",     "")),  this.settingsG.AddText("x48 y351 c0x12abd1", "Display Compress Mcode")
         this.displayFullOffsetTable  := this.settingsG.AddButton("x20 y383 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_FULL_OFFSET_TABLE",  "✔")), this.settingsG.AddText("x48 y383 c0x12abd1", "Display full offset table")
         this.showCommentsOffsetTable := this.settingsG.AddButton("x20 y415 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SHOW_COMMENTS_OFFSET_TABLE", "✔")), this.settingsG.AddText("x48 y415 c0x12abd1", "Show comments for the offset table")
-        this.multilineOutputLength   := this.settingsG.AddEdit("x220 y446 w62 h22 Background101010 c11b1a9 Center Number", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MULTILINE_OUTPUT_LENGTH",    "176")), this.settingsG.AddText("x20 y447 c0x9AA7B0", "Multiline output length:")
+        this.multilineOutputLength   := this.settingsG.AddEdit("x220 y446 w62 h22 Background101010 c11b1a9 Center Number", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MULTILINE_OUTPUT_LENGTH", "176")), this.settingsG.AddText("x20 y447 c0x9AA7B0", "Multiline output length:")
         this.checkAutoUpdate         := this.settingsG.AddButton("x20 y479 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE",          "")),  this.settingsG.AddText("x48 y479 c0x12abd1", "Check for updates on startup")
 
         this.cFileMode         := this.settingsG.AddButton("x350 y223 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "C_FILE_MODE",         "")) , this.settingsG.AddText("x378 y223 c0x12abd1", "C file mode")
@@ -1461,20 +1468,22 @@ class GuiMcode {
         this.dynamicLinkingAuto  := this.settingsG.AddButton("x710 y223 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_AUTO", "✔")), this.settingsG.AddText("x738 y223 c0x12abd1", "Link all static symbols dynamically (if possible)")
         this.removeLastAlignment := this.settingsG.AddButton("x710 y255 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "REMOVE_LAST_ALIGNMENT", "")), this.settingsG.AddText("x738 y255 c0x12abd1", "Remove last alignment [not implemented]")
         this.entryPoint          := this.settingsG.AddEdit("x845 y287 w66 h22   Background101010 c11b1a9 Center Number", IniRead(GLOBAL_INI_FILE, "SETTINGS", "ENTRY_POINT", 0x0)), this.settingsG.AddText("x710 y287 c0x12abd1", "Entry Point:")
-        this.ignoreSections      := this.settingsG.AddEdit("x845 y319 w304 h24  Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "IGNORE_SECTION", ".xdata|.pdata|.rdata$zzz")), this.settingsG.AddText("x710 y319 c0x12abd1", "Ignore Sections:")
-        this.importDllsRE        := this.CreateRichEdit(this.settingsG, "Consolas", 11, "0x11b1a9", "0x101010", "x750 y384 w399 h191", Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS", GuiMcode.IMPORT_DLL), "|"), "`n"))
-        this.dynamicLinkingRE    := this.CreateRichEdit(this.settingsG, "Consolas", 11, "0x11b1a9", "0x101010", "x342 y384 w394 h191", Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_SELECTIVELY", GuiMcode.DYNAMIC_LINKING), "|"), "`n"))
+        this.ignoreSections      := this.settingsG.AddEdit("x845 y319 w405 h24  Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "IGNORE_SECTION", ".xdata|.pdata|.rdata$zzz")), this.settingsG.AddText("x710 y319 c0x12abd1", "Ignore Sections:")
+
+        this.staticLibrariesRE   := this.CreateRichEdit(this.settingsG, "Consolas", 10, "0x11b1a9", "0x101010", "x342  y384 w450 h221 0x00000080")
+        this.dynamicLinkingRE    := this.CreateRichEdit(this.settingsG, "Consolas", 10, "0x11b1a9", "0x101010", "x802  y384 w240 h221 0x00000080")
+        this.importDllsRE        := this.CreateRichEdit(this.settingsG, "Consolas", 10, "0x11b1a9", "0x101010", "x1052 y384 w198 h221 0x00000080")
 
         this.settingsG.SetFont("s9", "Consolas")
         this.showTempDir    := this.settingsG.AddButton("x10 y5 h22", "Show temp dir")
         this.showSetPathGUI := this.settingsG.AddButton("x127 y5 h22", "Change paths")
         this.checkUpdate    := this.settingsG.AddButton("x237 y5 h22", "Check update")
 
-        this.settingsG.AddText("x0   y175 w1159 h2   Background005343")
+        this.settingsG.AddText("x0   y175 w1260 h2   Background005343")
         this.settingsG.AddText("x330 y175 w2    h600 Background005343")
         this.settingsG.AddText("x700 y175 w2    h174 Background005343")
         this.settingsG.AddText("x330 y347 w370  h2   Background005343")
-        this.settingsG.AddText("x866 y31  w2    h144 Background005343")
+        this.settingsG.AddText("x967 y31  w2    h144 Background005343")
 
         this.ctrl.ClrBtn(this.checkUpdate,             "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: "0x2a2766"})
         this.ctrl.ClrBtn(this.showSetPathGUI,          "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: "0x2a2766"})
@@ -1504,8 +1513,17 @@ class GuiMcode {
         EditBorder(this.entryPoint)
         EditBorder(this.ignoreSections)
         EditBorder(this.importDllsRE)
+        EditBorder(this.staticLibrariesRE)
         EditBorder(this.dynamicLinkingRE)
         EditBorder(this.multilineOutputLength)
+
+        IDE(this.staticLibrariesRE, RTF.Comments)
+        IDE(this.dynamicLinkingRE, RTF.Comments)
+        IDE(this.importDllsRE, RTF.Comments)
+
+        RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "STATIC_LIBRARIES", GuiMcode.STATIC_LIBRARIES), "|"), "`n"), RTF.Comments, this.staticLibrariesRE)
+        RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_SELECTIVELY", GuiMcode.DYNAMIC_LINKING), "|"), "`n"), RTF.Comments, this.dynamicLinkingRE)
+        RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS", GuiMcode.IMPORT_DLL), "|"), "`n"), RTF.Comments, this.importDllsRE)
     }
 
 
@@ -1673,7 +1691,7 @@ class GuiMcode {
             ExitApp()
         })
 
-        this.settings.OnEvent("Click",      (*) => this.settingsG.Show("w1159 h554"))
+        this.settings.OnEvent("Click",      (*) => this.settingsG.Show("w1260 h584"))
         this.copyMcodeFunc.OnEvent("Click", (*) => A_Clipboard := GLOBAL_MCODE_FUNC_FINAL)
         this.showSLP.OnEvent("Click",       (*) => this.slpG.Show("w1000 h450"))
         this.COFFinfo.OnEvent("Click",      (*) => this.COFFG.Show("w1200 h640"))
@@ -1780,6 +1798,7 @@ class GuiMcode {
             IniWrite(this.ignoreSections.Text, GLOBAL_INI_FILE, "SETTINGS", "IGNORE_SECTION")
             IniWrite(Join(StrSplit(RegExReplace(this.importDllsRE.Text, "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS")
             IniWrite(Join(StrSplit(RegExReplace(this.dynamicLinkingRE.Text, "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_SELECTIVELY")
+            IniWrite(Join(StrSplit(RegExReplace(this.staticLibrariesRE.Text, "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "STATIC_LIBRARIES")
         })
 
         this.showTempDir.OnEvent("Click",    (*) => Run(GLOBAL_WORKING_DIR))
@@ -1949,9 +1968,10 @@ class GuiMcode {
         set.Use               := this.setModeDDL.Text == "GCC" ? "GCC" : "MSVC"
         set.disassemblerPath  := this.objdumpPath.Text
         compil                := Compiler(set)
-        importDll             := StrSplit(RegExReplace(this.importDllsRE.Text, "\R+", "`n"), "`n")
-        dynamicLinking        := this.dynamicLinkingAuto.Text != "" ? true : (_ := StrSplit(RegExReplace(this.dynamicLinkingRE.Text, "\R+", "`n"), "`n"), _.Length ? _ : false)
-        ignoreSec             := StrSplit(this.ignoreSections.Text, "|")
+        importDll             := StrSplit(RegExReplace(RTrim(this.importDllsRE.Text, "`n`r"), "\R+", "`n"), "`n").Filter((T) => !RegExMatch(T, "^\s*//"))
+        dynamicLinking        := this.dynamicLinkingAuto.Text != "" ? true : (_ := StrSplit(RegExReplace(this.dynamicLinkingRE.Text, "\R+", "`n"), "`n").Filter((T) => !RegExMatch(T, "^\s*//")), _.Length ? _ : false)
+        staticLinking         := StrSplit(RegExReplace(RTrim(this.staticLibrariesRE.Text, "`n`r"), "\R+", "`n"), "`n").Filter((T) => !RegExMatch(T, "^\s*//"))
+        ignoreSec             := StrSplit(RTrim(this.ignoreSections.Text, "`n`r"), "|")
         fullOffsetTable       := this.displayFullOffsetTable.Text != "" ? true : false
         try ePoint            := Integer(this.entryPoint.Text)
 
@@ -2026,7 +2046,14 @@ class GuiMcode {
         Linker(path) {
             try {
                 linkerTime := QPC()
-                this.cf := COFF(path, importDll, ignoreSec, fullOffsetTable, ePoint ?? 0, dynamicLinking)
+                if (staticLinking.Length) {
+                    newStaticLinking := []
+                    for sl in staticLinking {
+                        newStaticLinking.Push(StaticLibraryParser(sl))
+                    }
+                } else newStaticLinking := staticLinking
+
+                this.cf := COFF(path, importDll, ignoreSec, fullOffsetTable, ePoint ?? 0, dynamicLinking, newStaticLinking)
                 this.mcode := this.cf.Linker()
 
                 ; Визуальная подсветка самой короткой строки MCode.
@@ -2070,7 +2097,7 @@ class GuiMcode {
                     ; RTF.ReplaceSel(this.mcode.dbg.ALL, RTF.VsCodeAhk, this.logLinkerRE)
                 }
             } catch as er {
-                this.Error_log("ERORR Linker:`n" er.Message)
+                this.Error_log("ERORR Linker:`n" er.Message "`n" er.Line " " er.File)
             }
         }
     }
