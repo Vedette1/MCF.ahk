@@ -423,19 +423,22 @@ class MultiMap extends Map {
 }
 
 
-; symbols := ["_errno"]
-; paths   := ["D:\GCC_tdm64-gcc-9.2.0\lib\gcc\x86_64-w64-mingw32\10.3.0", "D:\GCC_tdm64-gcc-9.2.0\x86_64-w64-mingw32\lib"]
-; dbg FindSymbolsInArchives(symbols, paths, true)
-
 /**
  * Ищет символы в статических библиотеках (.a, .lib).
- * @param {Array} symbolsToFind - Массив строк с именами символов (например: ["___chkstk_ms", "_main"])
+ * @param {Array} symbolsToFind - Массив строк с именами символов (["___chkstk_ms", "_main", ...])
  * @param {Array} pathsToSearch - Массив путей. Может содержать как пути к файлам, так и к директориям.
  * @param {Integer} findAll - Если false, поиск остановится, когда будет найдено хотя бы одно совпадение для каждого символа из массива. Если true — переберет все файлы целиком.
  * @returns {Array} - Массив объектов.
  */
-FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll := false) {
-    ParseArchive(filePath, &targetSymbols, &results, findAll) {
+FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll := false, recurse := false) {
+    results := []
+    targetSymbols := Map()
+    
+    for _, sym in symbolsToFind {
+        targetSymbols[sym] := true
+    }
+
+    ParseArchive(filePath, findAll) {
         try {
             SLP := StaticLibraryParser(filePath)
             for symName, info in SLP.ResolvedSymbols {
@@ -458,23 +461,16 @@ FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll := false) {
         return ext
     }
 
-    results := []
-    targetSymbols := Map()
-    for sym in symbolsToFind {
-        targetSymbols[sym] := true
-    }
-    
-    ProcessFile := (filePath) => ParseArchive(filePath, &targetSymbols, &results, findAll)
     for currentPath in pathsToSearch {
         attr := FileExist(currentPath)
         if (!attr)
             continue
             
         if InStr(attr, "D") {
-            Loop Files, currentPath "\*.*", "F" {
+            Loop Files, currentPath "\*.*", recurse ? "FR" : "F" {
                 ext := A_LoopFileExt
                 if (ext = "a" || ext = "lib") {
-                    ProcessFile(A_LoopFileFullPath)
+                    ParseArchive(A_LoopFileFullPath, findAll)
                     if (!findAll && targetSymbols.Count == 0)
                         return results
                 }
@@ -482,7 +478,7 @@ FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll := false) {
         } else {
             ext := GetExtension(currentPath)
             if (ext = "a" || ext = "lib") {
-                ProcessFile(currentPath)
+                ParseArchive(currentPath, findAll)
                 if (!findAll && targetSymbols.Count == 0)
                     return results
             }

@@ -8,6 +8,8 @@
 
 
 Join(arr, sep) => (arr.Length) ? ((s := '', i := 0, [(_ => (s .= arr[++i] . sep, i < arr.Length))*], Trim(s, sep))) : ""
+GUIDataToArray(text) => StrSplit(RegExReplace(text, "(?m)^\h+|\h*//.*"), "`n", "`r").Filter((T) => T != "")
+
 QPC() {
     static c := 0, f := (DllCall("QueryPerformanceFrequency", "int64*", &c), c /= 1000)
     return (DllCall("QueryPerformanceCounter", "int64*", &c), c / f)
@@ -1257,14 +1259,18 @@ class GuiMcode {
     static mainColor   := "005343"
     static decor       := "005343"
 
-    static ARR_FLAGS        := ["GCC (x64)", "GCC (x64) Mcode", "GCC (x86)", "GCC (x86) Mcode", "MSVC (x64_x86)"]
-    static IMPORT_DLL       := "User32|Kernel32|ntdll|Gdi32|Advapi32|msvcrt|Shell32|Ole32|OleAut32|Comctl32|Shlwapi|Ws2_32|Iphlpapi|Version|Secur32|Winmm|Imm32|Uxtheme|Setupapi|Crypt32|ucrtbase"
-    static DYNAMIC_LINKING  := "malloc|memset|memcpy"
-    static STATIC_LIBRARIES := "
+    static ARR_FLAGS           := ["GCC (x64)", "GCC (x64) Mcode", "GCC (x86)", "GCC (x86) Mcode", "MSVC (x64_x86)"]
+    static IMPORT_DLL          := "User32|Kernel32|ntdll|Gdi32|Advapi32|msvcrt|Shell32|Ole32|OleAut32|Comctl32|Shlwapi|Ws2_32|Iphlpapi|Version|Secur32|Winmm|Imm32|Uxtheme|Setupapi|Crypt32|ucrtbase"
+    static DYNAMIC_LINKING     := "malloc|memset|memcpy"
+    static SEARCH_SYMBOLS      := "___chkstk_ms|__main"
+    static SEARCH_SYMBOLS_DIR  := "...\gcc\x86_64-w64-mingw32\10.3.0\libgcc.a"
+    static SEARCH_SYMBOLS_INFO := "Important: The character search is extremely slow!`nThe search can take either a couple of seconds or a couple of minutes (depending on the number and size of files).`nTherefore, wait for the end of the algorithm."
+
+    static STATIC_LIBRARIES    := "
     (
         // For example ["ctrl + /" comment / uncomment]:
-        D:\GCC_tdm64-gcc-9.2.0\x86_64-w64-mingw32\lib\libmingwex.a
-        D:\GCC_tdm64-gcc-9.2.0\lib\gcc\x86_64-w64-mingw32\10.3.0\libgcc.a
+        // D:\GCC_tdm64-gcc-9.2.0\x86_64-w64-mingw32\lib\libmingwex.a
+        // D:\GCC_tdm64-gcc-9.2.0\lib\gcc\x86_64-w64-mingw32\10.3.0\libgcc.a
     )"
 
     __New() {
@@ -1276,6 +1282,7 @@ class GuiMcode {
         this.CreateCOFFinfoGUI()
         this.CreateSLPGUI()
         this.CreateLogGUI()
+        this.CreateSearchSymbolsGUI()
         this.Events()
         this.mainG.Show("w1288 h656")
     }
@@ -1330,21 +1337,6 @@ class GuiMcode {
         this.compressRE := this.CreateRichEdit(this.mainG, "Consolas", 9,  "0x11b1a9", "0x101010") ; 0x12abd1
 
         this.menuWarningRE := Menu()
-        this.menuWarningRE.Add("Show Linking log", (*) {
-            this.logG.Show("w700 h260")
-            this.logLinkerRE.Text := "Please wait... Loading log."
-
-            if (FileExist(GLOBAL_MCF_LINKER_LOG)) {
-                MCFLog := FileRead(GLOBAL_MCF_LINKER_LOG)
-            } else MCFLog := ""
-
-            if (MCFLog != "") {
-                this.logLinkerRE.Text := ""
-                RTF.ReplaceSel(MCFLog, RTF.VsCodeAhk, this.logLinkerRE)
-            } else {
-                this.logLinkerRE.Text := "The log will be displayed only after Mcode generation..."
-            }
-        })
 
         GuiReSizer.Opt(this.mainG.AddText("Background" GuiMcode.decor), "x0 y-170 wp1 h2")
         GuiReSizer.Opt(this.mainG.AddText("Background" GuiMcode.decor), "xp0.4 x132 y-168 w2 h168")
@@ -1518,8 +1510,8 @@ class GuiMcode {
         EditBorder(this.multilineOutputLength)
 
         IDE(this.staticLibrariesRE, RTF.Comments)
-        IDE(this.dynamicLinkingRE, RTF.Comments)
-        IDE(this.importDllsRE, RTF.Comments)
+        IDE(this.dynamicLinkingRE,  RTF.Comments)
+        IDE(this.importDllsRE,      RTF.Comments)
 
         RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "STATIC_LIBRARIES", GuiMcode.STATIC_LIBRARIES), "|"), "`n"), RTF.Comments, this.staticLibrariesRE)
         RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_SELECTIVELY", GuiMcode.DYNAMIC_LINKING), "|"), "`n"), RTF.Comments, this.dynamicLinkingRE)
@@ -1630,6 +1622,75 @@ class GuiMcode {
         this.logG.BackColor := 0x010101
         CustomTitleBarWindow(this.logG, "005343",,,,true)
         this.logLinkerRE := this.CreateRichEdit(this.logG, "Consolas", 11, "0xffffff", "0x101010",, "The log will be displayed only after Mcode generation...")
+    }
+
+
+    CreateSearchSymbolsGUI() {
+        this.searchSymbolsG := Gui("", "Search for symbols")
+        this.searchSymbolsG.SetFont("s11 cffffff", "consolas")
+        CustomTitleBarWindow(this.searchSymbolsG, GuiMcode.mainColor,,,,true)
+        this.searchSymbolsG.BackColor := 0x010101
+
+        this.searchSymbolsG.AddText("x45 y41 c0x9AA7B0", "=== Symbols for searching ===")
+        this.searchSymbolsG.AddText("x460 y41 c0x9AA7B0", "=== Paths to files / directories ===")
+        this.searchSymbolsG.SetFont("s10")
+
+        this.edit_symbols_RE         := this.CreateRichEdit(this.searchSymbolsG, "Consolas", 10, "0x11b1a9", "0x101010", "x10  y72 w300 h100 0x00000080")
+        this.edit_dir_file_RE        := this.CreateRichEdit(this.searchSymbolsG, "Consolas", 10, "0x11b1a9", "0x101010", "x320 y72 w600 h100 0x00000080")
+        this.btn_select_file         := this.searchSymbolsG.AddButton("x930 y72  w120 h24", "Browse file")
+        this.btn_select_dir          := this.searchSymbolsG.AddButton("x930 y110 w120 h24", "Browse dir")
+        this.btn_clear_paths         := this.searchSymbolsG.AddButton("x930 y148 w120 h24", "Clear the paths")
+        this.lv_viewing_symbols      := this.searchSymbolsG.AddListView("x10 y192 w801 h236 -HScroll -Grid -Multi", ["Symbol", "Path", "Object", "Offset", "Size", "IsThin"])
+        this.edit_output_paths_RE    := this.CreateRichEdit(this.searchSymbolsG, "Consolas", 10, "0x11b1a9", "0x101010", "x10 y450 w1040 h100 0x00000080")
+        
+        this.searchSymbolsG.SetFont("s11")
+        this.btnBox_find_all         := this.searchSymbolsG.AddButton("x821 y192 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_FIND_ALL",         ""))
+        this.btnBox_recursive_search := this.searchSymbolsG.AddButton("x821 y224 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_RECURSIVE_SEARCH", ""))
+        this.btnBox_search_static    := this.searchSymbolsG.AddButton("x821 y256 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_SEARCH_STATIC",   "✔"))
+        this.btnBox_search_dynamic   := this.searchSymbolsG.AddButton("x821 y288 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_SEARCH_DYNAMIC",   ""))
+        this.searchSymbolsG.SetFont("s10")
+        this.btn_search_symbols      := this.searchSymbolsG.AddButton("x821 y398 w229 h30", "Search symbols")
+        this.searchSymbolsG.AddText("x851 y193 c0x12abd1", "Search all matches")
+        this.searchSymbolsG.AddText("x851 y225 c0x12abd1", "Recursive search")
+        this.searchSymbolsG.AddText("x851 y257 c0x12abd1", "Static symbol search (ar)")
+        this.searchSymbolsG.AddText("x851 y289 c0x12abd1", "Dynamic symbol search (dll)")
+
+
+        this.lv_viewing_symbols.ModifyCol(1, "100 Text Left")
+        this.lv_viewing_symbols.ModifyCol(2, "370 Text Left")
+        this.lv_viewing_symbols.ModifyCol(3, "100 Text Left")
+        this.lv_viewing_symbols.ModifyCol(4, "70 Integer Left")
+        this.lv_viewing_symbols.ModifyCol(5, "70 Integer Left")
+        this.lv_viewing_symbols.ModifyCol(6, "70 Integer Left")
+
+        this.searchSymbolsG.AddText("x0 y182 w1060 h2 Background005343")
+        this.searchSymbolsG.AddText("x0 y438 w1060 h2 Background005343")
+
+        this.menu_search_symbols := Menu()
+
+        this.ctrl.ClrBtn(this.btn_select_file,    "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        this.ctrl.ClrBtn(this.btn_select_dir,     "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        this.ctrl.ClrBtn(this.btn_clear_paths,    "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        this.ctrl.ClrBtn(this.btn_search_symbols, "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+
+        this.ctrl.ClrBtn(this.btnBox_find_all,         "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
+        this.ctrl.ClrBtn(this.btnBox_recursive_search, "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
+        this.ctrl.ClrBtn(this.btnBox_search_static,    "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
+        this.ctrl.ClrBtn(this.btnBox_search_dynamic,   "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
+
+        this.lv_viewing_symbols.SetTheme("0x101010", "0xa3bed1", {SELECTED: "", HOT: "0x1f3a3a"}, "0x101010", "0x00ccff", "0x005343", {SELECTED: "0x1c2f31", HOT: "0x066e6e"})
+
+        EditBorder(this.edit_symbols_RE)
+        EditBorder(this.edit_dir_file_RE)
+        EditBorder(this.edit_output_paths_RE)
+
+        RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS",     GuiMcode.SEARCH_SYMBOLS), "|"), "`n"), RTF.Comments, this.edit_symbols_RE)
+        RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS_DIR", GuiMcode.SEARCH_SYMBOLS_DIR), "|"), "`n"), RTF.Comments, this.edit_dir_file_RE)
+        RTF.ReplaceSel(GuiMcode.SEARCH_SYMBOLS_INFO, RTF.ErrorLog, this.edit_output_paths_RE)
+
+        IDE(this.edit_symbols_RE,      RTF.Comments)
+        IDE(this.edit_dir_file_RE,     RTF.Comments)
+        IDE(this.edit_output_paths_RE, RTF.Comments)
     }
 
 
@@ -1763,11 +1824,31 @@ class GuiMcode {
 
         CopyFormatMcode(str) {
             if (this.HasOwnProp("cf")) {
-                arch := this.cf.is64 ? 'x64 := "`n(`n' : 'x86 := "`n(`n'
-                arch .= RegExReplace(str, "(.{" Integer(this.multilineOutputLength.Text) "})", "$1`n")
-                return arch '`n)"'
+                mcode := this.cf.is64 ? 'x64 := "`n(`n' : 'x86 := "`n(`n'
+                mcode .= RegExReplace(str, "(.{" Integer(this.multilineOutputLength.Text) "})", "$1`n") . '`n)"`n'
+                mcode .= "ptr := GetMcodePtr(" (this.cf.is64 ? 'x64' : ', x86') ")"
+                return mcode
             }
         }
+
+
+        this.menuWarningRE.Add("Show Linking log", (*) {
+            this.logG.Show("w700 h260")
+            this.logLinkerRE.Text := "Please wait... Loading log."
+
+            if (FileExist(GLOBAL_MCF_LINKER_LOG)) {
+                MCFLog := FileRead(GLOBAL_MCF_LINKER_LOG)
+            } else MCFLog := ""
+
+            if (MCFLog != "") {
+                this.logLinkerRE.Text := ""
+                RTF.ReplaceSel(MCFLog, RTF.VsCodeAhk, this.logLinkerRE)
+            } else {
+                this.logLinkerRE.Text := "The log will be displayed only after Mcode generation..."
+            }
+        })
+
+        this.menuWarningRE.Add("Search for unresolved symbols", (*) => this.searchSymbolsG.Show("w1060 h529"))
 
         ;########################################################## settings ####################################################
 
@@ -1935,6 +2016,90 @@ class GuiMcode {
         this.logG.OnEvent("Size", (GuiObj, MinMax, Width, Height) {
             this.logLinkerRE.Move(10, 41, Width - 20, Height - 51)
         })
+
+        ;########################################################## Search Symbols ########################################################
+
+        this.searchSymbolsG.OnEvent("Close", (*) {
+            IniWrite(Join(StrSplit(RegExReplace(this.edit_symbols_RE.Text,  "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS")
+            IniWrite(Join(StrSplit(RegExReplace(this.edit_dir_file_RE.Text, "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS_DIR")
+
+            IniWrite(this.btnBox_find_all.Text         != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_FIND_ALL")
+            IniWrite(this.btnBox_recursive_search.Text != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_RECURSIVE_SEARCH")
+            IniWrite(this.btnBox_search_static.Text    != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_SEARCH_STATIC")
+            IniWrite(this.btnBox_search_dynamic.Text   != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_SEARCH_DYNAMIC")
+        })
+
+        SelectPath(type) {
+            if (type == "File") {
+                selected := FileSelect("M3",,, "Archives (*.a; *.lib)")
+                if (selected) {
+                    for file in selected
+                        this.edit_dir_file_RE.Value .= (this.edit_dir_file_RE.Text ? "`n" : "") file
+                }
+            } else {
+                selected := DirSelect(, 3, "Select a directory to search")
+                if (selected)
+                    this.edit_dir_file_RE.Value .= (this.edit_dir_file_RE.Text ? "`n" : "") selected
+            }
+        }
+
+        OpenFileLocation() {
+            rowNumber := this.lv_viewing_symbols.GetNext(0, "F")
+            if (!rowNumber)
+                return
+            path := this.lv_viewing_symbols.GetText(rowNumber, 2)
+            if FileExist(path)
+                Run("explorer.exe /select,`"" path "`"")
+        }
+
+        this.btn_select_file.OnEvent("Click", (*) => SelectPath("File"))
+        this.btn_select_dir.OnEvent("Click",  (*) => SelectPath("Folder"))
+        this.btn_clear_paths.OnEvent("Click", (*) => this.edit_dir_file_RE.Text := "")
+
+        this.btnBox_find_all.OnEvent("Click",         (*) => this.btnBox_find_all.Text         := this.btnBox_find_all.Text         ? "" : "✔")
+        this.btnBox_recursive_search.OnEvent("Click", (*) => this.btnBox_recursive_search.Text := this.btnBox_recursive_search.Text ? "" : "✔")
+        ; this.btnBox_search_static.OnEvent("Click",    (*) => this.btnBox_search_static.Text    := this.btnBox_search_static.Text    ? "" : "✔")
+        ; this.btnBox_search_dynamic.OnEvent("Click",   (*) => this.btnBox_search_dynamic.Text   := this.btnBox_search_dynamic.Text   ? "" : "✔")
+        this.btnBox_search_dynamic.OnEvent("Click", (*) => MsgBox("Not implemented..."))
+
+        this.btn_search_symbols.OnEvent("Click", (*) {
+            try {
+                this.edit_output_paths_RE.Text := "Please wait. The symbol search process may take a few seconds or even minutes..."
+                this.lv_viewing_symbols.Delete()
+                symbols_path  := ""
+                symbolsToFind := GUIDataToArray(this.edit_symbols_RE.Text)
+                pathsToSearch := GUIDataToArray(this.edit_dir_file_RE.Text)
+                findAll       := this.btnBox_find_all.Text         != "" ? true : false
+                recurse       := this.btnBox_recursive_search.Text != "" ? true : false
+                symbols       := FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll, recurse)
+
+                for item in symbols {
+                    this.lv_viewing_symbols.Add("", item.Symbol, item.ArchivePath, item.ObjFile, item.DataOffset, item.Size, item.IsThin)
+                    symbols_path .= item.ArchivePath " // " item.Symbol "`n"
+                }
+
+                this.edit_output_paths_RE.Text := ""
+                if (symbols_path) {
+                    RTF.ReplaceSel("Search complete! " symbols.Length " characters found...`n" symbols_path, RTF.Comments, this.edit_output_paths_RE)
+                } else {
+                    RTF.ReplaceSel("Search completed! Unfortunately, no characters were found...", RTF.ErrorLog, this.edit_output_paths_RE)
+                }
+
+            } catch as er {
+                RTF.ReplaceSel("Symbol search error:`n" er.Message "`n" er.Line "`n" er.File, RTF.Comments, this.edit_output_paths_RE)
+            }
+        })
+
+        this.lv_viewing_symbols.OnEvent("ContextMenu", (GuiCtrlObj, Item, IsRightClick, X, Y) {
+            if (!Item)
+                return
+            this.menu_search_symbols.Show()
+        })
+
+        this.menu_search_symbols.Add("Copy the archive path", (*) => A_Clipboard := this.lv_viewing_symbols.GetText(this.lv_viewing_symbols.GetNext(0, "F"), 2))
+        this.menu_search_symbols.Add("Copy the symbol name",  (*) => A_Clipboard := this.lv_viewing_symbols.GetText(this.lv_viewing_symbols.GetNext(0, "F"), 1))
+        this.menu_search_symbols.Add()
+        this.menu_search_symbols.Add("Open the file folder",  (*) => OpenFileLocation())
     }
 
 
@@ -1968,9 +2133,9 @@ class GuiMcode {
         set.Use               := this.setModeDDL.Text == "GCC" ? "GCC" : "MSVC"
         set.disassemblerPath  := this.objdumpPath.Text
         compil                := Compiler(set)
-        importDll             := StrSplit(RegExReplace(RTrim(this.importDllsRE.Text, "`n`r"), "\R+", "`n"), "`n").Filter((T) => !RegExMatch(T, "^\s*//"))
-        dynamicLinking        := this.dynamicLinkingAuto.Text != "" ? true : (_ := StrSplit(RegExReplace(this.dynamicLinkingRE.Text, "\R+", "`n"), "`n").Filter((T) => !RegExMatch(T, "^\s*//")), _.Length ? _ : false)
-        staticLinking         := StrSplit(RegExReplace(RTrim(this.staticLibrariesRE.Text, "`n`r"), "\R+", "`n"), "`n").Filter((T) => !RegExMatch(T, "^\s*//"))
+        importDll             := GUIDataToArray(this.importDllsRE.Text)
+        dynamicLinking        := this.dynamicLinkingAuto.Text != "" ? true : (_ := GUIDataToArray(this.dynamicLinkingRE.Text), _.Length ? _ : false)
+        staticLinking         := GUIDataToArray(this.staticLibrariesRE.Text)
         ignoreSec             := StrSplit(RTrim(this.ignoreSections.Text, "`n`r"), "|")
         fullOffsetTable       := this.displayFullOffsetTable.Text != "" ? true : false
         try ePoint            := Integer(this.entryPoint.Text)
