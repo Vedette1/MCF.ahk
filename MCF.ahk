@@ -410,12 +410,6 @@ class COFF {
                     funcName := this.symbolsMap[symbolIndex].Name
                 }
 
-                ; if (this.symbolsMap.Has(symbolIndex) && this.symbolsMap[symbolIndex].StorageClass == 2 && !this.symbolsMap[symbolIndex].SectionIndex) {
-                ;     if (funcName ~= "^__imp_")
-                ;         funcName := SubStr(funcName, 7)
-                ;     this.export.Push({reloc: reloc.VirtualAddress, func: funcName}) ; Только нужные релокации + функции (без секций)
-                ; }
-                
                 this.relocations.Push({reloc: reloc.VirtualAddress, section: funcName, type: reloc.Type, SymbolTableIndex: symbolIndex})
             }
             this.sections.Push(section)
@@ -575,21 +569,32 @@ class COFF {
                     continue
 
                 loop (sec.NumberOfRelocations) {
-                    relocOffset := sec.PointerToRelocations + ((A_Index - 1) * COFF.SIZEOF_IMAGE_RELOCATION)
-                    reloc       := coffObj.IMAGE_RELOCATION(relocOffset)
-                    symbolIndex := reloc.SymbolTableIndex
-                    symbol      := coffObj.symbolsMap[symbolIndex]
-
+                    relocOffset    := sec.PointerToRelocations + ((A_Index - 1) * COFF.SIZEOF_IMAGE_RELOCATION)
+                    reloc          := coffObj.IMAGE_RELOCATION(relocOffset)
+                    symbolIndex    := reloc.SymbolTableIndex
+                    symbol         := coffObj.symbolsMap[symbolIndex]
                     absPatchOffset := localToGlobalOffsets[i] + reloc.VirtualAddress
 
                     if (symbol.StorageClass == 2 && symbol.SectionIndex == 0) {
-                        funcName := symbol.Name
-                        isImport := false
-                        if (funcName ~= "^__imp_") {
-                            funcName := SubStr(funcName, 7)
-                            isImport := true
+                        origName  := symbol.Name
+                        cleanName := origName
+                        isImport  := false
+                        
+                        if (this.is64) {
+                            if (origName ~= "^__imp_") {
+                                cleanName := SubStr(origName, 7)
+                                isImport := true
+                            }
+                        } else if (this.is32) {
+                            if (origName ~= "^__imp__") { ; Это импорт (__imp__Func@X)
+                                cleanName := RegExReplace(SubStr(origName, 8), "@\d+$")
+                                isImport := true
+                            } else if (origName ~= "^_") { ; Это не импорт (_main)
+                                cleanName := RegExReplace(SubStr(origName, 2), "@\d+$")
+                                isImport := false
+                            }
                         }
-                        pendingExternalRefs.Push({func: funcName, type: reloc.Type, patchOffset: absPatchOffset, isImport: isImport})
+                        pendingExternalRefs.Push({func: cleanName, orig: origName, type: reloc.Type, patchOffset: absPatchOffset, isImport: isImport}) ; чистое имя (func) и оригинальное (orig)
                     } else {
                         pendingRelocations.Push({CoffObj: coffObj, Reloc: reloc, Symbol: symbol, PatchOffset: absPatchOffset})
                     }
@@ -599,7 +604,8 @@ class COFF {
             ; Поиск неразрешенных символов в статических библиотеках
             if (this.staticLibraries.Length > 0) {
                 for ref in pendingExternalRefs {
-                    symToFind := ref.isImport ? "__imp_" ref.func : ref.func
+                    symToFind := ref.orig
+                    ; symToFind := ref.isImport ? ref.orig : ref.func
                     if (globalSymbolOffsets.Has(symToFind))
                         continue ; Уже разрешено предыдущим объектом
                     for lib in this.staticLibraries {
@@ -641,22 +647,25 @@ class COFF {
         }
 
         this.dbgLogInfo .= "`n[Relocations] Processing relocations and patching:`n"
-        
-        ; 3: Патчинг внутренних релокаций (включая статически слинкованные символы)
+
         for relocInfo in pendingRelocations {
             coffObj := relocInfo.CoffObj
-            symbol := relocInfo.Symbol
-            
+            symbol  := relocInfo.Symbol
             targetGlobalOffset := -1
+
             for item in layout {
                 if (ObjPtr(item.CoffObj) = ObjPtr(coffObj) && item.OriginalIndex = symbol.SectionIndex) {
-                    targetGlobalOffset := item.NewOffset + symbol.Value
+                    if (symbol.StorageClass == COFF.IMAGE_SYMBOL_STORAGE_CLASS.Get("IMAGE_SYM_CLASS_SECTION")) {  ; адрес символа = начало секции, Value игнорируется
+                        targetGlobalOffset := item.NewOffset
+                    } else {
+                        targetGlobalOffset := item.NewOffset + symbol.Value
+                    }
                     break
                 }
             }
-            
+
             if (targetGlobalOffset == -1)
-                throw Error("Failed to find section for internal symbol.")
+                throw Error("Failed to find section for internal symbol '" symbol.Name "'.")
 
             this.ApplyRelocation(mcode, targetGlobalOffset, relocInfo.PatchOffset, relocInfo.Reloc.Type)
         }
@@ -666,13 +675,11 @@ class COFF {
         this.unresolvedSymbols := []
         
         for ref in pendingExternalRefs {
-            symToFind := ref.isImport ? "__imp_" ref.func : ref.func
-            if (globalSymbolOffsets.Has(symToFind)) {
-                ; Статически слинковано!
+            symToFind := ref.orig
+            if (globalSymbolOffsets.Has(symToFind)) { ; Статически слинковано!
                 this.ApplyRelocation(mcode, globalSymbolOffsets[symToFind], ref.patchOffset, ref.type)
                 this.dbgLogInfo .= "`t[Static-Link] Symbol '" ref.func "' resolved statically at 0x" Format("{:X}", globalSymbolOffsets[symToFind]) "`n"
-            } else {
-                ; Не разрешено статически, отправляем в IAT/Dynamic
+            } else { ; Не разрешено статически, отправляется в IAT/Dynamic
                 if (ref.isImport)
                     this.imports.Push(ref)
                 else
@@ -807,213 +814,6 @@ class COFF {
             dbg:      {ALL: this.dbgLogInfo, short: shortDbgInfo}
         }
     }
-
-
-    ; Linker() {
-    ;     layout               := []
-    ;     currentOffset        := this.entryPoint <= 0 ? 0 : this.entryPoint <= 0xFF ? 2 : this.entryPoint <= 0xFFFFFFFF ? 5 : 0
-    ;     IAT                  := "|"
-    ;     unresolvedSymbolsNew := []
-    ;     shortDbgInfo         := ""
-
-    ;     this.dbgLogInfo := "[Layout] Analyzing and merging sections:`n"
-    ;     for i, sec in this.sections {
-    ;         if (this.sectionFilter[i]) {
-    ;             this.dbgLogInfo .= "`t[Ignore] Section '" sec.Name "' skipped.`n"
-    ;             continue
-    ;         }
-
-    ;         currentOffset := (currentOffset + this.alignment[i] - 1) & ~(this.alignment[i] - 1) ; Выравнивание
-    ;         layout.Push({Section: sec, OriginalIndex: i, NewOffset: currentOffset})
-    ;         this.dbgLogInfo .= "`t[OK] Section '" sec.Name "' merged. New offset: 0x" Format("{:X}", currentOffset) ", Size: " Max(sec.SizeOfRawData, sec.VirtualSize) "`n"
-    ;         currentOffset += Max(sec.SizeOfRawData, sec.VirtualSize)
-    ;     }
-
-    ;     totalSize := currentOffset
-    ;     if (totalSize == 0) {
-    ;         throw Error("No executable code or data found.")
-    ;     }
-            
-    ;     mcode := Buffer(totalSize, 0)
-    ;     COFF.EntryPoint(this.entryPoint + (this.entryPoint == 0 ? 0 : this.alignment[1]), mcode)
-    ;     for item in layout {
-    ;         if (item.Section.PointerToRawData > 0 && Max(item.Section.SizeOfRawData, item.Section.VirtualSize) > 0) {
-    ;             DllCall("RtlMoveMemory", "Ptr", mcode.Ptr + item.NewOffset, "Ptr", this.ptr.Ptr + item.Section.PointerToRawData, "UPtr", item.Section.SizeOfRawData)
-    ;         }
-    ;     }
-
-    ;     this.dbgLogInfo .= "`n[Relocations] Processing relocations and patching:`n"
-    ;     for item in layout { ; релокации (патчинг адресов)
-    ;         loop (item.Section.NumberOfRelocations) {
-    ;             relocOffset := item.Section.PointerToRelocations + ((A_Index - 1) * COFF.SIZEOF_IMAGE_RELOCATION)
-    ;             reloc       := this.IMAGE_RELOCATION(relocOffset)
-    ;             symbolIndex := reloc.SymbolTableIndex
-    ;             symbol      := this.symbolsMap[symbolIndex]
-                
-    ;             targetSectionNewOffset := -1
-    ;             for targetItem in layout { ; Ищем куда переехала секция на которую ссылается символ
-    ;                 if (targetItem.OriginalIndex == symbol.SectionIndex) {
-    ;                     targetSectionNewOffset := targetItem.NewOffset
-    ;                     break
-    ;                 }
-    ;             }
-
-    ;             ; Внешние символы
-    ;             if (this.symbolsMap.Has(symbolIndex) && this.symbolsMap[symbolIndex].StorageClass == 2 && !this.symbolsMap[symbolIndex].SectionIndex) {
-    ;                 funcName := this.symbolsMap[symbolIndex].Name
-    ;                 if (funcName ~= "^__imp_") {
-    ;                     funcName := SubStr(funcName, 7)
-    ;                     this.imports.Push({func: funcName, type: reloc.Type, sectionIndex: item.OriginalIndex, patchOffset: item.NewOffset + reloc.VirtualAddress})
-    ;                     this.dbgLogInfo .= "`t[Import] Found DLL symbol: '" funcName "' (patched at offset 0x" Format("{:X}", item.NewOffset + reloc.VirtualAddress) ")`n"
-    ;                 } else {
-    ;                     this.unresolvedSymbols.Push({func: funcName, type: reloc.Type, sectionIndex: item.OriginalIndex, patchOffset: item.NewOffset + reloc.VirtualAddress})
-    ;                     this.dbgLogInfo .= "`t[Static] Found unresolved symbol: '" funcName "' (requires static linking)`n"
-    ;                 }
-    ;                 continue
-    ;             }
-
-    ;             if (targetSectionNewOffset == -1) {
-    ;                 throw Error("targetSectionNewOffset == -1`n This error most likely occurs because you're ignoring a specific section. Remove all sections from [ignoreSections | Ignore Sections:] and try building Mcode again.")
-    ;             }
-
-    ;             targetAddress := targetSectionNewOffset + symbol.Value               ; реальный адрес, куда указывает символ в новом буфере.
-    ;             patchAddress  := item.NewOffset + reloc.VirtualAddress               ; адрес самой инструкции, которую нужно пропатчить
-    ;             this.ApplyRelocation(mcode, targetAddress, patchAddress, reloc.Type) ; патчинг релокаций внутренних символов
-    ;         }
-    ;     }
-
-    ;     ;============================================ кастомный мини IAT + VA reloc ============================================
-    ;     this.dbgLogInfo .= "`n[IAT] Generating Import Address Table (IAT):`n"
-    ;     loadedDlls := Map()
-    ;     for dll in this.importDll {
-    ;         if (hMod := DllCall("LoadLibrary", "Str", dll, "Ptr")) {
-    ;             loadedDlls[dll] := hMod
-    ;             this.dbgLogInfo .= "`tLoaded DLL: '" dll "'`n"
-    ;         } else {
-    ;             this.dbgLogInfo .= "`t[Warning] Failed to load DLL: '" dll "'`n"
-    ;         }
-    ;     }
-
-    ;     ; Вспомогательная функция для поиска и добавления в IAT
-    ;     ResolveAndAdd(exp, writeIAT := true) {
-    ;         disp := this.is32 ? 4 : exp.type
-    ;         for dll, hMod in loadedDlls {
-    ;             if (DllCall("GetProcAddress", "Ptr", hMod, "AStr", exp.func, "Ptr")) {
-    ;                 if (writeIAT) {
-    ;                     IAT .= dll ":" exp.func ":" exp.patchOffset ":" disp "|"
-    ;                 }
-    ;                 this.dbgLogInfo .= "`t[OK] Symbol '" exp.func "' found in " dll ". Added to IAT.`n"
-    ;                 return true
-    ;             }
-    ;         }
-    ;         if (writeIAT) {
-    ;             this.dbgLogInfo .= "`t[Skip] Symbol '" exp.func "' not found in loaded DLLs (UNKNOWN_DLL). Skipped in IAT.`n"
-    ;         }
-    ;         return false
-    ;     }
-
-
-    ;     if (this.imports.Length) { ; 1. Обработка обычных импортов (__imp_)
-    ;         line := true
-    ;         this.dbgLogInfo .= "`n[IAT] Processing dynamic imports (__imp_):`n"
-    ;         for exp in this.imports {
-    ;             if !(ResolveAndAdd(exp)) {
-    ;                 if (line) {
-    ;                     shortDbgInfo .= "Not found imports [DLL]:`n"
-    ;                     line := false
-    ;                 }
-    ;                 shortDbgInfo .= "`tsymbol: '" exp.func "' -> offset: " Format("0x{:X}", exp.patchOffset) " -> reloc type " Format("0x{:X}", exp.type) "`n"
-    ;             }
-    ;         }
-    ;     }
-
-    ;     if (this.unresolvedSymbols.Length) { ; 2. Обработка неразрешенных символов в зависимости от dynamicLinking
-    ;         this.dbgLogInfo .= "`n[IAT] Processing unresolved symbols (static):`n"
-    ;         if (this.dynamicLinking == true) {
-    ;             this.dbgLogInfo .= "`tdynamicLinking = true. Attempting to link all unresolved symbols dynamically.`n"
-    ;             for exp in this.unresolvedSymbols {
-    ;                 if !(ResolveAndAdd(exp)) {
-    ;                     unresolvedSymbolsNew.Push(exp)
-    ;                 }
-    ;             }
-    ;         } else if (this.dynamicLinking is Array) {
-    ;             this.dbgLogInfo .= "`tdynamicLinking = Array. Checking specific symbols for dynamic linking.`n"
-    ;             for exp in this.unresolvedSymbols {
-    ;                 isDynRequested := false
-    ;                 for dynFunc in this.dynamicLinking {
-    ;                     if (exp.func == dynFunc) {
-    ;                         isDynRequested := true
-    ;                         break
-    ;                     }
-    ;                 }
-                    
-    ;                 if (isDynRequested) {
-    ;                     if !(ResolveAndAdd(exp))
-    ;                         unresolvedSymbolsNew.Push(exp)
-    ;                 } else {
-    ;                     unresolvedSymbolsNew.Push(exp)
-    ;                 }
-    ;             }
-    ;         } else {
-    ;             this.dbgLogInfo .= "`tdynamicLinking = false. Unresolved symbols are ignored.`n"
-    ;             for exp in this.unresolvedSymbols {
-    ;                 unresolvedSymbolsNew.Push(exp)
-    ;             }
-    ;         }
-    ;         this.unresolvedSymbols := unresolvedSymbolsNew ; Просто перезаписываем массив на будущие, когда я начну делать статическую линковку (её поддержку)
-
-    ;         if (this.unresolvedSymbols.Length) {
-    ;             shortDbgInfo .= "Unresolved symbols not found (static)`n"
-    ;             for exp in this.unresolvedSymbols {
-    ;                 shortDbgInfo .= "`tsymbol: '" exp.func "' -> offset: " Format("0x{:X}", exp.patchOffset) " -> reloc type " Format("0x{:X}", exp.type) . (ResolveAndAdd(exp, false) ? " // It can be made dynamic`n" : " // This cannot be made dynamic.`n")
-    ;             }
-    ;         }
-    ;     }
-
-    ;     ; VA-релокации (если они есть) размещаются в тот же IAT-хвост, но с префиксом "VA"
-    ;     if (this.VAreloc.Length) {
-    ;         this.dbgLogInfo .= "`n[IAT] Adding VA relocations:`n"
-    ;         for va in this.VAreloc {
-    ;             IAT .= "VA:" va.size ":" va.offset "|"
-    ;             this.dbgLogInfo .= "`tAdded VA relocation (size: " va.size ", offset: 0x" Format("{:X}", va.offset) ")`n"
-    ;         }
-    ;     }
-
-    ;     ;============================================ таблица символов ============================================
-    ;     ; this.dbgLogInfo .= "`n[Table] Формирование таблицы экспортируемых символов:`n"
-    ;     for i, symbol in this.symbolsMap {
-    ;         if (symbol.SectionIndex > 0 && (symbol.StorageClass == 2) || this.fullOffsetTable) {
-    ;             secOffset := -1
-    ;             for item in layout {
-    ;                 if (item.OriginalIndex == symbol.SectionIndex) {
-    ;                     secOffset := item.NewOffset
-    ;                     break
-    ;                 }
-    ;             }
-                
-    ;             if (secOffset != -1) {
-    ;                 this.exportedSymbols[i] := {symbol: symbol.Name, offset: Format("0x{:X}", secOffset + symbol.Value), opt: symbol.StorageClass != 2 ? " [dispensable]" : ""}
-    ;             }
-    ;         }
-    ;     }
-
-    ;     ;============================================ конечный Mcode + таблица ============================================
-    ;     exportedSymbolsStr := "offset := Map()`n"
-    ;     for value, symbol in this.exportedSymbols {
-    ;         exportedSymbolsStr .= "offset[" Chr(34) symbol.symbol Chr(34) "] := " symbol.offset " `; " value symbol.opt "`n"
-    ;     }
-        
-    ;     this.dbgLogInfo .= "`n[Linker] Linking process completed " . (shortDbgInfo == "" ? "successfully, most likely no errors!`n" : "with errors. Check main GUI for potential issues...`n")
-    ;     ; this.dbgLogInfo .= "[Linker] Возможные проблемы:`n`n" . shortDbgInfo
-
-    ;     return {
-    ;         hex:      Binary.BinaryToStrin(mcode, mcode.Size, 12)           . RTrim(IAT, "|"),
-    ;         base64:   Binary.BinaryToStrin(mcode, mcode.Size, 1)            . RTrim(IAT, "|"),
-    ;         compress: Binary.BinaryToCompressedBase64(mcode, mcode.Size, 2) . RTrim(IAT, "|"),
-    ;         table:    RTrim(exportedSymbolsStr, "`n"),
-    ;         dbg:      {ALL: this.dbgLogInfo, short: shortDbgInfo}
-    ;     }
-    ; }
 
 
     AllInfo() {
