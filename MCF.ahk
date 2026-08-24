@@ -2,6 +2,7 @@
 #SingleInstance Force
 #Include const.ahk
 #Include Static_Library_Viewer.ahk
+#Include Lib\Demangle.ahk
 
 class Binary {
     static BinaryToStrin(bin, len, flag) {
@@ -236,6 +237,13 @@ class COFF {
         "IMAGE_SYM_CLASS_CLR_TOKEN",        107,
     )
 
+    static IMAGE_COMDAT_SELECT_NODUPLICATES := 1
+    static IMAGE_COMDAT_SELECT_ANY          := 2
+    static IMAGE_COMDAT_SELECT_SAME_SIZE    := 3
+    static IMAGE_COMDAT_SELECT_EXACT_MATCH  := 4
+    static IMAGE_COMDAT_SELECT_ASSOCIATIVE  := 5
+    static IMAGE_COMDAT_SELECT_LARGEST      := 6
+
     static SIZEOF_IMAGE_SECTION_HEADER := 40
     static SIZEOF_IMAGE_FILE_HEADER    := 20
     static SIZEOF_IMAGE_SYMBOL         := 18
@@ -274,15 +282,18 @@ class COFF {
      * - Если `dynamicLinking := false`, то класс не будет пытаться патчить asm инструкции. То есть, если компилятор подразумевает статическую линковку для определенного символа, то он будет статически слинкован.
      * @param {Array} staticLibraries - Массив экземпляров класса StaticLibraryParser для статической линковки.
      */
-    __New(obj, importDll := ["User32", "msvcrt", "Kernel32"], ignoreSections := [".pdata", ".xdata", ".rdata$zzz"], fullOffsetTable := true, entryPoint := 0x0, dynamicLinking := true, staticLibraries := []) {
-        this.obj             := obj             ; Путь до COFF (.o / .obj) файла.
-        this.importDll       := importDll       ; Массив dll которые используются в конечном Mcode (если есть внешнии символы).
-        this.ignoreSections  := ignoreSections  ; Массив секций, которые будут игнорироватся при линковке (в основном сюда ничего не нужно дописывать).
-        this.fullOffsetTable := fullOffsetTable ; Если fullOffsetTable == false, то линковщик вернет смещения только нужных символов (функции / глобалки*), в ином случае будет полная таблица всех символов.
-        this.entryPoint      := entryPoint      ; Точка входа.
-        this.dynamicLinking  := dynamicLinking  ; Управление динамической линковкой: false, true или массив конкретных функций.
-        this.staticLibraries := staticLibraries ; Массив статических библиотек (экземпляры StaticLibraryParser)
-        this.dbgLogInfo      := ""
+    __New(obj, importDll := ["User32", "msvcrt", "Kernel32"], ignoreSections := [".pdata", ".xdata", ".rdata$zzz"], fullOffsetTable := true, entryPoint := 0x0, dynamicLinking := true, staticLibraries := [], dynamicSubstitution := Map(), staticSubstitution := Map(), demangle := 1) {
+        this.obj                 := obj                 ; Путь до COFF (.o / .obj) файла.
+        this.importDll           := importDll           ; Массив dll которые используются в конечном Mcode (если есть внешнии символы).
+        this.ignoreSections      := ignoreSections      ; Массив секций, которые будут игнорироватся при линковке (в основном сюда ничего не нужно дописывать).
+        this.fullOffsetTable     := fullOffsetTable     ; Если fullOffsetTable == false, то линковщик вернет смещения только нужных символов (функции / глобалки*), в ином случае будет полная таблица всех символов.
+        this.entryPoint          := entryPoint          ; Точка входа.
+        this.dynamicLinking      := dynamicLinking      ; Управление динамической линковкой: false, true или массив конкретных функций.
+        this.staticLibraries     := staticLibraries     ; Массив статических библиотек (экземпляры StaticLibraryParser).
+        this.dynamicSubstitution := dynamicSubstitution ; Подмена динамических символов.
+        this.staticSubstitution  := staticSubstitution  ; Подмена статических символов.
+        this.demangle            := demangle            ; Деманглирование символов в таблице смещений. Работает только с GCC / Clang. MSVC не поддерживается.
+        this.dbgLogInfo          := ""
 
         this.imports           := []  ; Массив объектов импортируемых символов из dll (__imp_).
         this.unresolvedSymbols := []  ; Массив объектов неразрешённых символов (статическая линковка).
@@ -316,6 +327,7 @@ class COFF {
 
         this.ReadSymbol()
         this.ReadSection()
+        this.ReadComdatInfo()
         this.HeaderCharacteristics()
     }
 
@@ -383,15 +395,23 @@ class COFF {
 
 
     ReadSymbol() {
+        this.weakExternals := Map()
         symbolIndex := 0
         while (symbolIndex < this.NUMBER_OF_SYMBOLS) {
-            nextSymbol := this.IMAGE_SYMBOL(this.POINTER_TO_SYMBOL_TABLE + (symbolIndex * COFF.SIZEOF_IMAGE_SYMBOL))
+            symOffset  := this.POINTER_TO_SYMBOL_TABLE + (symbolIndex * COFF.SIZEOF_IMAGE_SYMBOL)
+            nextSymbol := this.IMAGE_SYMBOL(symOffset)
             this.symbolsMap[symbolIndex] := nextSymbol
-            if (nextSymbol.StorageClass == COFF.IMAGE_SYMBOL_STORAGE_CLASS.Get("IMAGE_SYM_CLASS_FILE")) {
-                symbolIndex++ ; Имя файла хранится в auxiliary записи, которая следует сразу за основным символом (Зачем это надо? Для красоты!)
-                continue
+
+            ; парсинг aux для WEAK_EXTERNAL
+            if (nextSymbol.StorageClass == 105 && nextSymbol.NumberOfAuxSymbols > 0) {
+                auxOffset := this.POINTER_TO_SYMBOL_TABLE + ((symbolIndex + 1) * COFF.SIZEOF_IMAGE_SYMBOL)
+                this.weakExternals[symbolIndex] := {
+                    TagIndex:        NumGet(this.ptr, auxOffset + 0, "UInt"),
+                    Characteristics: NumGet(this.ptr, auxOffset + 4, "UInt")
+                }
             }
-            symbolIndex += 1 + nextSymbol.NumberOfAuxSymbols ; Вспомогательные символы (Auxiliary Symbols)
+
+            symbolIndex += 1 + nextSymbol.NumberOfAuxSymbols ; Стандартный пропуск: +1 сам символ, +NumberOfAuxSymbols его доп записи
         }
     }
 
@@ -413,6 +433,31 @@ class COFF {
                 this.relocations.Push({reloc: reloc.VirtualAddress, section: funcName, type: reloc.Type, SymbolTableIndex: symbolIndex})
             }
             this.sections.Push(section)
+        }
+    }
+
+
+    ReadComdatInfo() {
+        this.comdatSections := Map() ; key = SectionIndex (1-based), value = объект с COMDAT-данными из aux-записи
+        for symIdx, symbol in this.symbolsMap {
+            if (symbol.StorageClass == COFF.IMAGE_SYMBOL_STORAGE_CLASS.Get("IMAGE_SYM_CLASS_STATIC") && symbol.NumberOfAuxSymbols > 0 && symbol.SectionIndex > 0) {
+                secIdx := symbol.SectionIndex
+                if (secIdx > this.sections.Length)
+                    continue
+                if !(this.sections[secIdx].Characteristics & COFF.IMAGE_SECTION_HEADER_CHARACTERISTICS.Get("IMAGE_SCN_LNK_COMDAT"))
+                    continue
+
+                auxOffset := this.POINTER_TO_SYMBOL_TABLE + ((symIdx + 1) * COFF.SIZEOF_IMAGE_SYMBOL) ; Aux-запись лежит сразу после основного символа в таблице символов
+                this.comdatSections[secIdx] := {
+                    Length:       NumGet(this.ptr, auxOffset + 0,  "UInt"),
+                    NumRelocs:    NumGet(this.ptr, auxOffset + 4,  "UShort"),
+                    NumLineNums:  NumGet(this.ptr, auxOffset + 6,  "UShort"),
+                    CheckSum:     NumGet(this.ptr, auxOffset + 8,  "UInt"),
+                    AssocSection: NumGet(this.ptr, auxOffset + 12, "UShort"),
+                    Selection:    NumGet(this.ptr, auxOffset + 14, "UChar"),
+                    SymbolName:   symbol.Name
+                }
+            }
         }
     }
 
@@ -441,25 +486,20 @@ class COFF {
                 }
             }
 
+            alignBytes := 0
             for name, value in COFF.IMAGE_SECTION_HEADER_CHARACTERISTICS {
                 if InStr(name, "ALIGN") {
                     if ((sec.Characteristics & ALIGN_MASK) == value) {
                         charact.Push(name)
                         hasAlign := true
                         alignBytes := RegExReplace(name, "\D+", "")
-                        this.alignment.Push(alignBytes != "" ? Integer(alignBytes) : 0)
                     }
                 } else {
-                    if (sec.Characteristics & value) {
+                    if (sec.Characteristics & value)
                         charact.Push(name)
-                    }
                 }
             }
-
-            if (!hasAlign) {
-                this.alignment.Push(4) ; минимальное выравнивае, чтобы математика не ломалась если у секции нет ALIGN флага.
-            }
-
+            this.alignment.Push(hasAlign ? (alignBytes != "" ? Integer(alignBytes) : 4) : 4)
             this.headerCharact[i " " sec.Name] := charact ; dbg info [ПОТОМ ДОДЕЛАТЬ]
             this.sectionFilter.Push(isUseless ? 1 : 0) ; Нужные секции для линковки
         }
@@ -486,9 +526,9 @@ class COFF {
         if (this.is64) {
             switch relocType {
                 case IMAGE_REL_AMD64_ABSOLUTE : return
-                case IMAGE_REL_AMD64_ADDR64   : NumPut("Int64", targetAddress, mcode, patchAddress), this.VAreloc.Push({offset: patchAddress, size: 8})
-                case IMAGE_REL_AMD64_ADDR32   : NumPut("UInt",  targetAddress, mcode, patchAddress), this.VAreloc.Push({offset: patchAddress, size: 4})
-                case IMAGE_REL_AMD64_ADDR32NB : NumPut("UInt",  targetAddress, mcode, patchAddress)
+                case IMAGE_REL_AMD64_ADDR64   : NumPut("Int64", targetAddress + NumGet(mcode, patchAddress, "Int64"), mcode, patchAddress), this.VAreloc.Push({offset: patchAddress, size: 8})
+                case IMAGE_REL_AMD64_ADDR32   : NumPut("UInt",  targetAddress + NumGet(mcode, patchAddress, "UInt"), mcode, patchAddress), this.VAreloc.Push({offset: patchAddress, size: 4})
+                case IMAGE_REL_AMD64_ADDR32NB : NumPut("UInt",  targetAddress + NumGet(mcode, patchAddress, "UInt"), mcode, patchAddress)
                 case IMAGE_REL_AMD64_REL32    : NumPut("Int",   targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 4), mcode, patchAddress)
                 case IMAGE_REL_AMD64_REL32_1  : NumPut("Int",   targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 5), mcode, patchAddress)
                 case IMAGE_REL_AMD64_REL32_2  : NumPut("Int",   targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 6), mcode, patchAddress)
@@ -500,8 +540,8 @@ class COFF {
         } else {
             switch relocType {
                 case IMAGE_REL_I386_ABSOLUTE : return
-                case IMAGE_REL_I386_DIR32    : NumPut("UInt", targetAddress, mcode, patchAddress), this.VAreloc.Push({offset: patchAddress, size: 4})
-                case IMAGE_REL_I386_DIR32NB  : NumPut("UInt", targetAddress, mcode, patchAddress)
+                case IMAGE_REL_I386_DIR32    : NumPut("UInt", targetAddress + NumGet(mcode, patchAddress, "UInt"), mcode, patchAddress), this.VAreloc.Push({offset: patchAddress, size: 4})
+                case IMAGE_REL_I386_DIR32NB  : NumPut("UInt", targetAddress + NumGet(mcode, patchAddress, "UInt"), mcode, patchAddress)
                 case IMAGE_REL_I386_REL32    : NumPut("Int",  targetAddress + NumGet(mcode, patchAddress, "Int") - (patchAddress + 4), mcode, patchAddress)
                 default: throw Error(Format("Unsupported relocation type [x86]: 0x{:04X}", relocType))
             }
@@ -524,6 +564,7 @@ class COFF {
         visitedObjKeys["main.obj"] := true
         
         globalSymbolOffsets := Map() ; Глобальная таблица символов (имя -> абсолютное смещение в Mcode)
+        comdatRegistry      := Map() ; key = COMDAT-имя, value = {offset, size, checksum}
         pendingRelocations  := []    ; Внутренние релокации, которые нужно пропатчить позже
         pendingExternalRefs := []    ; Внешние ссылки, которые нужно разрешить (статика или динамика)
 
@@ -535,20 +576,69 @@ class COFF {
 
             localToGlobalOffsets := Map()
 
-            ; Лейаут секций текущего объекта
-            for i, sec in coffObj.sections {
-                if (coffObj.sectionFilter[i]) {
-                    this.dbgLogInfo .= "`t[Ignore] Section '" sec.Name "' skipped.`n"
+            ; Лейаут секций текущего объекта (с сортировкой $-групп и COMDAT-логикой)
+            sortedIndices := coffObj.GetSortedSectionIndices()
+            for idx, i in sortedIndices {
+                sec     := coffObj.sections[i]
+                secSize := Max(sec.SizeOfRawData, sec.VirtualSize)
+                if (secSize == 0) {
+                    this.dbgLogInfo .= "`t[Skip] Empty section '" sec.Name "'`n"
                     continue
                 }
 
-                alignVal := coffObj.alignment[i]
+                ; --- COMDAT-обработка ---
+                if (coffObj.comdatSections.Has(i)) {
+                    comdat     := coffObj.comdatSections[i]
+                    comdatName := comdat.SymbolName
+                    selection  := comdat.Selection
+
+                    if (comdatRegistry.Has(comdatName)) {
+                        existing := comdatRegistry[comdatName]
+
+                        if (selection == COFF.IMAGE_COMDAT_SELECT_NODUPLICATES) {
+                            _ := 1 ; заглушка, ибо IMAGE_COMDAT_SELECT_NODUPLICATES работает криво с MSVC. Насколько я понял ошубки тригерят одноименные секции, а не символы.
+                            ; throw Error("COMDAT NODUPLICATES violation: symbol '" comdatName "' in '" coffObj.obj "'")
+                        } else if (selection == COFF.IMAGE_COMDAT_SELECT_SAME_SIZE) {
+                            if (existing.size != secSize)
+                                throw Error("COMDAT SAME_SIZE violation: symbol '" comdatName "' (" existing.size " vs " secSize ")")
+                            this.dbgLogInfo .= "`t[COMDAT SAME_SIZE] Duplicate '" comdatName "' skipped.`n"
+
+                        } else if (selection == COFF.IMAGE_COMDAT_SELECT_EXACT_MATCH) {
+                            if (existing.checksum != comdat.CheckSum)
+                                throw Error("COMDAT EXACT_MATCH violation: symbol '" comdatName "' (checksum mismatch)")
+                            this.dbgLogInfo .= "`t[COMDAT EXACT_MATCH] Duplicate '" comdatName "' skipped.`n"
+
+                        } else if (selection == COFF.IMAGE_COMDAT_SELECT_LARGEST) {
+                            this.dbgLogInfo .= "`t[COMDAT LARGEST] Duplicate '" comdatName "' skipped (first-wins MVP).`n" ; Упрощение: отсается первый встреченный
+
+                        } else if (selection == COFF.IMAGE_COMDAT_SELECT_ASSOCIATIVE) {
+                            this.dbgLogInfo .= "`t[COMDAT ASSOCIATIVE] Duplicate '" comdatName "' skipped (first-wins MVP).`n" ; Упрощение: ассоциативные секции обрабатываем как ANY
+
+                        } else {
+                            this.dbgLogInfo .= "`t[COMDAT ANY] Duplicate '" comdatName "' skipped.`n" ; ANY и неизвестные значения
+                        }
+
+                        ; Пропускаем дубликат, но даём виртуальную запись в layout, чтобы релокации из этой секции резолвились на оригинал
+                        localToGlobalOffsets[i] := existing.offset
+                        layout.Push({CoffObj: coffObj, Section: sec, OriginalIndex: i, NewOffset: existing.offset, IsComdatDup: true})
+                        continue
+                    }
+                }
+
+                ; --- Обычное добавление секции ---
+                alignVal      := coffObj.alignment[i]
                 currentOffset := (currentOffset + alignVal - 1) & ~(alignVal - 1)
                 localToGlobalOffsets[i] := currentOffset
-                
                 layout.Push({CoffObj: coffObj, Section: sec, OriginalIndex: i, NewOffset: currentOffset})
-                this.dbgLogInfo .= "`t[OK] Section '" sec.Name "' merged. New offset: 0x" Format("{:X}", currentOffset) ", Size: " Max(sec.SizeOfRawData, sec.VirtualSize) "`n"
-                currentOffset += Max(sec.SizeOfRawData, sec.VirtualSize)
+                this.dbgLogInfo .= "`t[OK] Section '" sec.Name "' merged. New offset: 0x" Format("{:X}", currentOffset) ", Size: " secSize "`n"
+
+                ; Регистрируем COMDAT в глобальном реестре
+                if (coffObj.comdatSections.Has(i)) {
+                    comdat := coffObj.comdatSections[i]
+                    comdatRegistry[comdat.SymbolName] := {offset: currentOffset, size: secSize, checksum: comdat.CheckSum}
+                }
+
+                currentOffset += secSize
             }
 
             ; Регистрация публичных символов текущего объекта в глобальной таблице
@@ -556,9 +646,12 @@ class COFF {
                 if (symbol.SectionIndex > 0 && symbol.StorageClass == 2) {
                     if (localToGlobalOffsets.Has(symbol.SectionIndex)) {
                         symName := symbol.Name
-                        ; MVP COMDAT: если символ уже есть, просто игнорируем дубликат (не вытаскиваем код повторно) [потом нужно придумать что то лучше]
+                        symAddr := localToGlobalOffsets[symbol.SectionIndex] + symbol.Value
+                        ; COMDAT уже разрулен на уровне секций - здесь просто first-wins для символов
                         if (!globalSymbolOffsets.Has(symName))
                             globalSymbolOffsets[symName] := localToGlobalOffsets[symbol.SectionIndex] + symbol.Value
+                        else if (!coffObj.comdatSections.Has(symbol.SectionIndex))
+                            this.dbgLogInfo .= "`t[Warning] Duplicate non-COMDAT symbol '" symName "' ignored.`n"
                     }
                 }
             }
@@ -576,9 +669,10 @@ class COFF {
                     absPatchOffset := localToGlobalOffsets[i] + reloc.VirtualAddress
 
                     if (symbol.StorageClass == 2 && symbol.SectionIndex == 0) {
-                        origName  := symbol.Name
-                        cleanName := origName
-                        isImport  := false
+                        origName    := symbol.Name
+                        cleanName   := origName
+                        isImport    := false
+                        substituted := false
                         
                         if (this.is64) {
                             if (origName ~= "^__imp_") {
@@ -589,12 +683,83 @@ class COFF {
                             if (origName ~= "^__imp__") { ; Это импорт (__imp__Func@X)
                                 cleanName := RegExReplace(SubStr(origName, 8), "@\d+$")
                                 isImport := true
-                            } else if (origName ~= "^_") { ; Это не импорт (_main)
+                            } else if (origName ~= "^___") { ; Внутренние функции (___mingw_vsprintf)
+                                cleanName := origName
+                                isImport := false
+                            } else if (origName ~= "^_") { ; Обычные функции (_main)
                                 cleanName := RegExReplace(SubStr(origName, 2), "@\d+$")
                                 isImport := false
                             }
                         }
-                        pendingExternalRefs.Push({func: cleanName, orig: origName, type: reloc.Type, patchOffset: absPatchOffset, isImport: isImport}) ; чистое имя (func) и оригинальное (orig)
+
+                        ; Подмена символов.
+                        if (this.dynamicSubstitution.Has(cleanName)) {
+                            cleanName   := this.dynamicSubstitution[cleanName]
+                            isImport    := true
+                            substituted := true
+                        } else if (this.staticSubstitution.Has(cleanName)) {
+                            cleanName   := this.staticSubstitution[cleanName]
+                            isImport    := false
+                            substituted := true
+                        }
+                        pendingExternalRefs.Push({func: cleanName, orig: origName, type: reloc.Type, patchOffset: absPatchOffset, isImport: isImport, substituted: substituted}) ; чистое имя (func) и оригинальное (orig)
+                    } else if (symbol.StorageClass == 105) { ; --- WEAK EXTERNAL ---
+                        weakInfo    := coffObj.weakExternals.Has(symbolIndex) ? coffObj.weakExternals[symbolIndex] : {TagIndex: 0, Characteristics: 1}
+                        fallbackSym := (weakInfo.TagIndex > 0 && coffObj.symbolsMap.Has(weakInfo.TagIndex)) ? coffObj.symbolsMap[weakInfo.TagIndex] : ""
+                        origName  := symbol.Name
+                        cleanName := origName
+                        isImport  := false
+
+                        ; Чистим имя так же, как для обычных внешних
+                        if (this.is64) {
+                            if (origName ~= "^__imp_") {
+                                cleanName := SubStr(origName, 7)
+                                isImport  := true
+                            }
+                        } else if (this.is32) {
+                            if (origName ~= "^__imp__") {
+                                cleanName := RegExReplace(SubStr(origName, 8), "@\d+$")
+                                isImport  := true
+                            } else if (origName ~= "^___") {
+                                cleanName := origName
+                                isImport  := false
+                            } else if (origName ~= "^_") {
+                                cleanName := RegExReplace(SubStr(origName, 2), "@\d+$")
+                                isImport  := false
+                            }
+                        }
+
+                        ; Определяем fallback-имя
+                        fallbackName := ""
+                        if (fallbackSym && fallbackSym.Name != "") {
+                            fallbackName := fallbackSym.Name
+                            ; Чистим fallback имя тоже
+                            if (this.is64) {
+                                if (fallbackName ~= "^__imp_")
+                                    fallbackName := SubStr(fallbackName, 7)
+                            } else if (this.is32) {
+                                if (fallbackName ~= "^__imp__") {
+                                    fallbackName := RegExReplace(SubStr(fallbackName, 8), "@\d+$")
+                                } else if (fallbackName ~= "^___") {
+                                    ; Ничего не делаем, оставляем как есть
+                                } else if (fallbackName ~= "^_") {
+                                    fallbackName := RegExReplace(SubStr(fallbackName, 2), "@\d+$")
+                                }
+                            }
+                        }
+
+                        pendingExternalRefs.Push({
+                            func: cleanName,
+                            orig: origName,
+                            type: reloc.Type,
+                            patchOffset: absPatchOffset,
+                            isImport: isImport,
+                            isWeak: true,
+                            weakSearch: weakInfo.Characteristics,
+                            fallbackName: fallbackName,
+                            fallbackTagIndex: weakInfo.TagIndex
+                        })
+
                     } else {
                         pendingRelocations.Push({CoffObj: coffObj, Reloc: reloc, Symbol: symbol, PatchOffset: absPatchOffset})
                     }
@@ -604,8 +769,13 @@ class COFF {
             ; Поиск неразрешенных символов в статических библиотеках
             if (this.staticLibraries.Length > 0) {
                 for ref in pendingExternalRefs {
+                if (ref.substituted) ; Подменённые символы НЕ ищем в статических библиотеках
+                    continue
+
+                if (ref.HasProp("isWeak") && ref.isWeak && ref.weakSearch == 1)
+                    continue
+
                     symToFind := ref.orig
-                    ; symToFind := ref.isImport ? ref.orig : ref.func
                     if (globalSymbolOffsets.Has(symToFind))
                         continue ; Уже разрешено предыдущим объектом
                     for lib in this.staticLibraries {
@@ -619,6 +789,10 @@ class COFF {
                                         ; Извлекаем .obj в память (Buffer) и парсим как COFF
                                         buf := lib.ExtractMemberToBuffer(objInfo.ObjFile)
                                         newCoff := COFF(buf, this.importDll, this.ignoreSections, this.fullOffsetTable, 0, this.dynamicLinking, this.staticLibraries)
+
+                                        if (this.is64 != newCoff.is64) ; Проверка битности
+                                            throw Error("Architecture mismatch: main object is " (this.is64 ? "x64" : "x86") ", but '" objInfo.ObjFile "' is " (newCoff.is64 ? "x64" : "x86"))
+
                                         objQueue.Push({coff: newCoff, originKey: objKey})
                                         this.dbgLogInfo .= "`t[Static] Extracted '" objInfo.ObjFile "' from library for symbol '" symToFind "'`n"
                                     } catch as er {
@@ -641,6 +815,9 @@ class COFF {
         COFF.EntryPoint(this.entryPoint + (this.entryPoint == 0 ? 0 : this.alignment[1]), mcode)
         
         for item in layout {
+            ; COMDAT-дубликаты не копируем (их данные уже лежат в оригинале)
+            if (item.HasProp("IsComdatDup") && item.IsComdatDup)
+                continue
             if (item.Section.PointerToRawData > 0 && Max(item.Section.SizeOfRawData, item.Section.VirtualSize) > 0) {
                 DllCall("RtlMoveMemory", "Ptr", mcode.Ptr + item.NewOffset, "Ptr", item.CoffObj.ptr.Ptr + item.Section.PointerToRawData, "UPtr", item.Section.SizeOfRawData)
             }
@@ -653,14 +830,18 @@ class COFF {
             symbol  := relocInfo.Symbol
             targetGlobalOffset := -1
 
-            for item in layout {
-                if (ObjPtr(item.CoffObj) = ObjPtr(coffObj) && item.OriginalIndex = symbol.SectionIndex) {
-                    if (symbol.StorageClass == COFF.IMAGE_SYMBOL_STORAGE_CLASS.Get("IMAGE_SYM_CLASS_SECTION")) {  ; адрес символа = начало секции, Value игнорируется
-                        targetGlobalOffset := item.NewOffset
-                    } else {
-                        targetGlobalOffset := item.NewOffset + symbol.Value
+            if (symbol.SectionIndex == -1) { ; Абсолютный символ
+                targetGlobalOffset := symbol.Value
+            } else {
+                for item in layout {
+                    if (ObjPtr(item.CoffObj) = ObjPtr(coffObj) && item.OriginalIndex = symbol.SectionIndex) {
+                        if (symbol.StorageClass == COFF.IMAGE_SYMBOL_STORAGE_CLASS.Get("IMAGE_SYM_CLASS_SECTION")) {  ; адрес символа = начало секции, Value игнорируется
+                            targetGlobalOffset := item.NewOffset
+                        } else {
+                            targetGlobalOffset := item.NewOffset + symbol.Value
+                        }
+                        break
                     }
-                    break
                 }
             }
 
@@ -673,17 +854,40 @@ class COFF {
         ; Разрешение внешних ссылок (статика или динамика)
         this.imports := []
         this.unresolvedSymbols := []
-        
+
+
         for ref in pendingExternalRefs {
             symToFind := ref.orig
-            if (globalSymbolOffsets.Has(symToFind)) { ; Статически слинковано!
-                this.ApplyRelocation(mcode, globalSymbolOffsets[symToFind], ref.patchOffset, ref.type)
-                this.dbgLogInfo .= "`t[Static-Link] Symbol '" ref.func "' resolved statically at 0x" Format("{:X}", globalSymbolOffsets[symToFind]) "`n"
-            } else { ; Не разрешено статически, отправляется в IAT/Dynamic
-                if (ref.isImport)
+            if (!ref.substituted && globalSymbolOffsets.Has(symToFind)) {
+                this.ApplyRelocation(mcode, globalSymbolOffsets[symToFind], ref.patchOffset, ref.type) ; патчим как обычно
+            } else if (ref.HasProp("isWeak") && ref.isWeak) {
+                ; --- WEAK EXTERNAL: символ не найден ---
+                if (ref.fallbackName != "" && globalSymbolOffsets.Has(ref.fallbackName)) {
+                    ; Fallback найден — используем его адрес
+                    this.ApplyRelocation(mcode, globalSymbolOffsets[ref.fallbackName], ref.patchOffset, ref.type)
+                    this.dbgLogInfo .= "`t[Weak] Symbol '" ref.func "' not found, using fallback '" ref.fallbackName "'`n"
+
+                } else if (ref.weakSearch == 1) {
+                    ; SEARCH_NOLIBRARY: не искать, патчим нулём. Для REL32 это означает: call/jmp на следующую инструкцию (nop-like). Для ADDR32/ADDR64 это просто 0
+                    this.ApplyRelocation(mcode, 0, ref.patchOffset, ref.type)
+                    this.dbgLogInfo .= "`t[Weak] Symbol '" ref.func "' not found, patched with 0 (NOLIBRARY)`n"
+
+                } else {
+                    ; Не нашли ни символ, ни fallback — в unresolved
+                    if (ref.isImport) {
+                        this.imports.Push(ref)
+                    } else {
+                        this.unresolvedSymbols.Push(ref)
+                    }
+                }
+
+            } else {
+                ; Обычный внешний символ не найден
+                if (ref.isImport) {
                     this.imports.Push(ref)
-                else
+                } else {
                     this.unresolvedSymbols.Push(ref)
+                }
             }
         }
 
@@ -801,11 +1005,19 @@ class COFF {
         ;============================================ конечный Mcode + таблица ============================================
         exportedSymbolsStr := "offset := Map()`n"
         for value, symbol in this.exportedSymbols {
-            exportedSymbolsStr .= "offset[" Chr(34) symbol.symbol Chr(34) "] := " symbol.offset " `; " value symbol.opt "`n"
+            if (this.demangle) {
+                demSym := Demangle.GetSymbolToObj(symbol.symbol)
+                switch (this.demangle) {
+                    case 1 : exportedSymbolsStr .= "offset[" Chr(34) demSym.name   Chr(34) "] := ptr + " symbol.offset " `; " value symbol.opt "`n"
+                    case 2 : exportedSymbolsStr .= "offset[" Chr(34) symbol.symbol Chr(34) "] := ptr + " symbol.offset " `; " value symbol.opt . demSym.signature "`n"
+                    case 3 : exportedSymbolsStr .= "offset[" Chr(34) demSym.name   Chr(34) "] := ptr + " symbol.offset " `; " value symbol.opt . demSym.signature "`n"
+                }
+            } else {
+                exportedSymbolsStr .= "offset[" Chr(34) symbol.symbol Chr(34) "] := ptr + " symbol.offset " `; " value symbol.opt "`n"
+            }
         }
-        
-        this.dbgLogInfo .= "`n[Linker] Linking process completed " . (shortDbgInfo == "" ? "successfully, most likely no errors!`n" : "with errors. Check main GUI for potential issues...`n")
 
+        this.dbgLogInfo .= "`n[Linker] Linking process completed " . (shortDbgInfo == "" ? "successfully, most likely no errors!`n" : "with errors. Check main GUI for potential issues...`n")
         return {
             hex:      Binary.BinaryToStrin(mcode, mcode.Size, 12)           . RTrim(IAT, "|"),
             base64:   Binary.BinaryToStrin(mcode, mcode.Size, 1)            . RTrim(IAT, "|"),
@@ -813,6 +1025,48 @@ class COFF {
             table:    RTrim(exportedSymbolsStr, "`n"),
             dbg:      {ALL: this.dbgLogInfo, short: shortDbgInfo}
         }
+    }
+
+
+    ; Возвращает массив индексов секций (1-based), отсортированных с учётом $-суффиксов. Секции из sectionFilter (useless) не включаются.
+    GetSortedSectionIndices() {
+        ; Сравнение имён секций: сначала по префиксу (до $), затем по суффиксу (после $). Секции без $ считаются как префикс с пустым суффиксом (идут первыми в группе).
+        CompareSectionNames(name1, name2) {
+            pos1 := InStr(name1, "$")
+            pos2 := InStr(name2, "$")
+
+            if (pos1 == 0 && pos2 == 0)
+                return StrCompare(name1, name2)
+
+            prefix1 := pos1 ? SubStr(name1, 1, pos1 - 1) : name1
+            prefix2 := pos2 ? SubStr(name2, 1, pos2 - 1) : name2
+            suffix1 := pos1 ? SubStr(name1, pos1 + 1) : ""
+            suffix2 := pos2 ? SubStr(name2, pos2 + 1) : ""
+
+            cmp := StrCompare(prefix1, prefix2)
+            if (cmp != 0)
+                return cmp
+
+            return StrCompare(suffix1, suffix2)
+        }
+
+        indices := []
+        for i, sec in this.sections {
+            if (!this.sectionFilter[i])
+                indices.Push(i)
+        }
+        ; Bubble sort по CompareSectionNames
+        n := indices.Length
+        Loop n - 1 {
+            Loop n - A_Index {
+                if (CompareSectionNames(this.sections[indices[A_Index]].Name, this.sections[indices[A_Index + 1]].Name) > 0) {
+                    tmp := indices[A_Index]
+                    indices[A_Index] := indices[A_Index + 1]
+                    indices[A_Index + 1] := tmp
+                }
+            }
+        }
+        return indices
     }
 
 
