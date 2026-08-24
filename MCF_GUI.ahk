@@ -2,1255 +2,57 @@
 #SingleInstance Force
 
 #Include const.ahk
-#Include IDE.ahk
+#Include Lib\IDE.ahk
+#Include Lib\CustomListView.ahk
+#Include Lib\MCODE.ahk
+#Include Lib\GuiReSizer.ahk
+#Include Lib\CustomTitleBarWindow.ahk
+#Include Lib\MyCtrl.ahk
 #Include сompilerWrapper.ahk
+#Include Static_Library_Viewer.ahk
 #Include MCF.ahk
 
 
 Join(arr, sep) => (arr.Length) ? ((s := '', i := 0, [(_ => (s .= arr[++i] . sep, i < arr.Length))*], Trim(s, sep))) : ""
 GUIDataToArray(text) => StrSplit(RegExReplace(text, "(?m)^\h+|\h*//.*"), "`n", "`r").Filter((T) => T != "")
 
+; Переводит многострочный текст из Edit в объект Map.
+ParseEditToMap(text) {
+    resultMap := Map()
+    cleanText := RegExReplace(text, "(?m)^\h+|\h*//.*")
+    for line in StrSplit(cleanText, "`n", "`r") {
+        if (Trim(line) == "")
+            continue
+        parts := StrSplit(line, "->", " `t", 2)
+        if (parts.Length == 2) {
+            resultMap[parts[1]] := parts[2]
+        }
+    }
+    return resultMap
+}
+
+/**
+ * @param data Данные (Map при toEdit = false, либо String при toEdit = true)
+ * @param toEdit Направление: false = в INI строку, true = в текст для Edit
+ */
+FormatIniData(data, toEdit := false) {
+    if (toEdit) {
+        return StrReplace(data, "|", "`r`n")
+    } 
+
+    iniStr := ""
+    for line in StrSplit(data, "`n", "`r") {
+        if (Trim(line) == "")
+            continue
+        iniStr .= line "|"
+    }
+    return RTrim(iniStr, "|")
+}
+
+
 QPC() {
     static c := 0, f := (DllCall("QueryPerformanceFrequency", "int64*", &c), c /= 1000)
     return (DllCall("QueryPerformanceCounter", "int64*", &c), c / f)
-}
-
-
-class Custom_Ctrl {
-    static WM_CTLCOLORBTN := 0x0135
-    static NM_CUSTOMDRAW  := -12
-    static CDIS_DISABLED  := 0x0004
-    static CDIS_HOT       := 0x0040
-    static CDIS_SELECTED  := 0x0001
-    static CDIS_DEFAULT   := 0x0020
-    static first          := false
-
-    static clrHwnd     := Map()
-    static WM_DRAWITEM := 0x002B
-    static INIT        := false
-
-    __New(gui?) {
-        OnMessage(Custom_Ctrl.WM_CTLCOLORBTN, (wParam, lParam, *) => 0)
-        if (IsSet(gui))
-            DllCall("user32\SendMessage", "Ptr", gui.Hwnd, "UInt", 0x0127, "Ptr", 0x0001 | ((0x0001 | 0x0002) << 16), "Ptr", 0)
-    }
-
-    ; 0x0210
-    ClrDDL(DDL, bgColor := 0x005000, textColor := 0xFFFFFF, highlightColor := 0x0078D7) {
-        if (!Custom_Ctrl.clrHwnd.Has(DDL.hwnd)) {
-            this.SetWindowTheme(DDL.hwnd, "DarkMode_CFD")
-        }
-        if (!Custom_Ctrl.INIT) {
-            OnMessage(Custom_Ctrl.WM_DRAWITEM, this.__DrawDDL.Bind(this))
-            Custom_Ctrl.INIT := true
-        }
-        Custom_Ctrl.clrHwnd[DDL.hwnd] := {bgColor: bgColor, textColor: textColor, highlightColor: highlightColor}
-    }
-
-
-    ClrBtn(BTN, bgColor?, textColor?, borderColor?, borderWidth := 4, hoverEffect := {DISABLED: "", SELECTED: "", HOT: ""}, ddlMode := false) {
-        if (!Custom_Ctrl.clrHwnd.Has(BTN.hwnd)) {
-            this.SetWindowTheme(BTN.hwnd, "DarkMode_Explorer")
-            BTN.OnNotify(Custom_Ctrl.NM_CUSTOMDRAW, (gCtrl, lParam) => this.__DrawBTN(gCtrl, lParam))
-        }
-        Custom_Ctrl.clrHwnd[BTN.hwnd] := {bg:  bgColor     ?? "0x544d4d",
-                                          tx:  textColor   ?? "",
-                                          bc:  borderColor ?? "",
-                                          bw:  borderWidth,
-                                          he:  hoverEffect,
-                                          ddl: ddlMode}
-    }
-
-
-    __DrawBTN(gCtrl, lParam) {
-        Critical(-1)
-        static CDRF_SKIPDEFAULT := 0x4
-        static DT_CALCRECT      := 0x400
-        static DT_WORDBREAK     := 0x10
-
-        static o    := this.NMCUSTOMDRAW()
-        hwndFrom    := NumGet(lParam, o.hwndFrom,    "Ptr")
-        idFrom      := NumGet(lParam, o.idFrom,      "UInt")
-        code        := NumGet(lParam, o.code,        "UInt")
-        dwDrawStage := NumGet(lParam, o.dwDrawStage, "UInt")
-        hdc         := NumGet(lParam, o.hdc,         "Ptr")
-        left        := NumGet(lParam, o.left,        "UInt")
-        top         := NumGet(lParam, o.top,         "UInt")
-        right       := NumGet(lParam, o.right,       "UInt")
-        bottom      := NumGet(lParam, o.bottom,      "UInt")
-        dwItemSpec  := NumGet(lParam, o.dwItemSpec,  "Ptr")
-        uItemState  := NumGet(lParam, o.uItemState,  "UInt")
-        lItemlParam := NumGet(lParam, o.lItemlParam, "Ptr")
-        RECT        := lParam + o.left
-        width       := right  - left
-        height      := bottom - top
-        info        := Custom_Ctrl.clrHwnd.Get(hwndFrom, 0)
-
-        brushColor  := info.bg
-        textColor   := info.tx
-        borderColor := info.bc
-        borderWidth := info.bw
-        ddlMode  := info.ddl
-        DISABLED := info.he.DISABLED ?? ""
-        SELECTED := info.he.SELECTED ?? ""
-        HOT      := info.he.HOT      ?? ""
-
-        if (uItemState & Custom_Ctrl.CDIS_DISABLED)
-            brushColor := DISABLED != "" ? DISABLED : this.BrightenColor(brushColor, -20) ; -20
-        else if (uItemState & Custom_Ctrl.CDIS_SELECTED || GetKeyState("LButton", "P") && Custom_Ctrl.first)
-            brushColor := SELECTED != "" ? SELECTED : this.BrightenColor(brushColor, -10), Custom_Ctrl.first := false ; -10
-        else if (uItemState & Custom_Ctrl.CDIS_HOT)
-            brushColor := HOT != "" ? HOT : this.BrightenColor(brushColor, 20) ; 20
-
-        ; Draw Background.
-        this.SetBkMode(hdc, 0)
-        this.SetDCBrushColor(hdc, this.RgbToBgr(brushColor))
-        this.SelectObject(hdc, bru := this.GetStockObject(18))
-        this.SelectObject(hdc, this.GetStockObject(19))
-        this.FillRect(hdc, RECT, bru)
-
-        if (borderColor != "") {
-            hpen := this.CreatePen(0, borderWidth, this.RgbToBgr(borderColor))
-            oldPen := this.SelectObject(hdc, hpen)
-            this.SelectObject(hdc, this.GetStockObject(5)) ; NULL_BRUSH
-            this.Rectangle(hdc, left, top, right, bottom)
-            this.SelectObject(hdc, oldPen)
-            this.DeleteObject(hpen)
-        }
-
-        if (textColor != "") {
-            style     := this.GetWindowLong(gCtrl.Hwnd, -16) & 0x300
-            textAlign := (style = 0x100) ? 0x0 : (style = 0x200) ? 0x2 : 0x1 ; Left, Right, Center
-            dtFlags   := DT_WORDBREAK | textAlign
-
-            if (textColor != "" && ddlMode == true) {
-                this.RtlMoveMemory(defText := Buffer(16), RECT)
-                this.SetTextColor(hdc, this.RgbToBgr(textColor))
-                NumPut("Int", 4, defText, 0), NumPut("Int", width - 20, defText, 8)
-                this.DrawText(hdc, gCtrl.Text, -1, defText, 0x24) ; DT_VCENTER | DT_SINGLELINE
-
-                hFont := this.CreateFont(18, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, "Arial")
-                oldFont := this.SelectObject(hdc, hFont)
-
-                this.SetTextColor(hdc, this.RgbToBgr("0xb9b9b9"))
-                NumPut("Int", width - 14, RECT, 0), NumPut("Int", -2, RECT, 4)
-                this.DrawText(hdc, "⌵", -1, RECT, 0x24) ; DT_VCENTER | DT_SINGLELINE
-
-                this.SelectObject(hdc, oldFont)
-                this.DeleteObject(hFont)
-
-            } else {
-                this.RtlMoveMemory(rcText := Buffer(16), RECT) ; Исходный прямоугольник
-                this.RtlMoveMemory(rcCalc := Buffer(16), rcText) ; Высота текста
-                textHeight := this.DrawText(hdc, gCtrl.Text, -1, rcCalc, dtFlags | DT_CALCRECT)
-
-                ; Вертикальное смещение для центрирования
-                btnHeight := NumGet(rcText, 12, "Int") - NumGet(rcText, 4, "Int")
-                if (textHeight < btnHeight) {
-                    offset := (btnHeight - textHeight) // 2
-                    NumPut("Int", NumGet(rcText, 4, "Int") + offset, rcText, 4)   ; top
-                    NumPut("Int", NumGet(rcText, 12, "Int") - offset, rcText, 12) ; bottom
-                }
-
-                this.SetTextColor(hdc, this.RgbToBgr(textColor))
-                this.DrawText(hdc, gCtrl.Text, -1, rcText, dtFlags)
-            }
-        }
-        return textColor != "" ? CDRF_SKIPDEFAULT : 1 ; Если цвет текста не задан, его рисует винда
-    }
-
-
-    __DrawDDL(wParam, lParam, msg, hwnd) {
-        Critical(-1)
-        static ODS_SELECTED := 0x0001
-        static DT_FLAGS     := 0x824
-
-        static o  := this.DRAWITEMSTRUCT()
-        CtlType   := NumGet(lParam, o.CtlType,   "UInt")
-        CtlID     := NumGet(lParam, o.CtlID,     "UInt")
-        itemID    := NumGet(lParam, o.itemID,    "UInt")
-        itemState := NumGet(lParam, o.itemState, "UInt")
-        hwndItem  := NumGet(lParam, o.hwndItem,  "Ptr")
-        hDC       := NumGet(lParam, o.hDC,       "Ptr")
-        left      := NumGet(lParam, o.left,      "UInt")
-        top       := NumGet(lParam, o.top,       "UInt")
-        right     := NumGet(lParam, o.right,     "UInt")
-        bottom    := NumGet(lParam, o.bottom,    "UInt")
-        itemData  := NumGet(lParam, o.itemData,  "Ptr")
-        RECT      := lParam + o.left
-
-        info           := Custom_Ctrl.clrHwnd.Get(hwndItem, 0)
-        currentBgColor := (itemState & ODS_SELECTED) ? info.highlightColor : info.bgColor
-
-        this.SetDCBrushColor(hDC, this.RgbToBgr(currentBgColor))
-        this.SelectObject(hDC, bru := this.GetStockObject(18))
-        this.FillRect(hDC, RECT, bru)
-
-        if (itemID != -1) {
-            txtBuf := Buffer(2048, 0)
-            SendMessage(CtlType = 2 ? 0x0189 : 0x0148, itemID, txtBuf.Ptr, hwndItem)
-            this.SetBkMode(hDC, 1)
-            this.SetTextColor(hDC, this.RgbToBgr(info.textColor))
-            NumPut("UInt", left + 4, lParam, o.left)
-            this.DrawText(hDC, StrGet(txtBuf), -1, RECT, DT_FLAGS)
-        }
-        return true
-    }
-
-    DRAWITEMSTRUCT() {
-        static p := A_PtrSize
-        return {
-            CtlType: 0, CtlID: 4, itemID: 8, itemAction: 12, itemState: 16, hwndItem: p=8 ? 24 : 20, hDC: p=8 ? 32 : 24,
-            left: p=8 ? 40 : 28, top: p=8 ? 44 : 32, right: p=8 ? 48 : 36, bottom: p=8 ? 52 : 40, ; RECT rcItem
-            itemData: p=8 ? 56 : 44
-        }
-    }
-
-
-    NMCUSTOMDRAW() {
-        static p := A_PtrSize
-        return {
-            hwndFrom: 0, idFrom: p=8 ? 8 : 4, code: p=8 ? 16 : 8, ; NMHDR
-            dwDrawStage: p=8 ? 24 : 12, hdc: p=8 ? 32 : 16,
-            left: p=8 ? 40 : 20, top: p=8 ? 44 : 24, right: p=8 ? 48 : 28, bottom: p=8 ? 52 : 32, ; RECT rc
-            dwItemSpec: p=8 ? 56 : 36, uItemState: p=8 ? 64 : 40, lItemlParam: p=8 ? 72 : 44
-        }
-    }
-
-
-    RGB(R, G, B) => ((R << 16) | (G << 8) | B)
-    BrightenColor(clr, perc := 5) => ((p := perc / 100 + 1), this.RGB(Round(Min(255, (clr >> 16 & 0xFF) * p)), Round(Min(255, (clr >> 8 & 0xFF) * p)), Round(Min(255, (clr & 0xFF) * p))))
-    RgbToBgr(rgbColor) => ((rgbColor & 0xFF) << 16) | (((rgbColor >> 8) & 0xFF) << 8) | ((rgbColor >> 16) & 0xFF)
-
-    RtlMoveMemory(Destination, Source, Length := 16) => DllCall("Kernel32\RtlMoveMemory", "Ptr", Destination, "Ptr", Source, "UPtr", Length, "Int")
-
-    GetWindowLong(hWnd, nIndex) => DllCall("User32\GetWindowLong", "Ptr", hWnd, "Int", nIndex, "Int")
-
-    SetWindowTheme(hwnd, pszSubAppName, pszSubIdList := 0) => DllCall("UxTheme\SetWindowTheme", "Ptr", hwnd, "Ptr", StrPtr(pszSubAppName), "Ptr", pszSubIdList, "Int")
-
-    FillRect(hDC, lprc, hbr) => DllCall("User32\FillRect", "Ptr", hDC, "Ptr", lprc, "Ptr", hbr, "Int")
-
-    SetBkMode(hdc, iBkMode) => DllCall("Gdi32\SetBkMode", "Ptr", hdc, "Int", iBkMode, "Int")
-
-    SetDCBrushColor(hdc, crColor) => DllCall("Gdi32\SetDCBrushColor", "Ptr", hdc, "UInt", crColor, "UInt")
-
-    SelectObject(hdc, hgdiobj) => DllCall("Gdi32\SelectObject", "Ptr", hdc, "Ptr", hgdiobj, "Ptr")
-
-    GetStockObject(fnObject) => DllCall("Gdi32\GetStockObject", "Int", fnObject, "Ptr")
-
-    DeleteObject(hObject) => DllCall("Gdi32\DeleteObject", "Ptr", hObject, "Int")
-
-    CreatePen(fnPenStyle, nWidth, crColor) => DllCall("Gdi32\CreatePen", "Int", fnPenStyle, "Int", nWidth, "UInt", crColor, "Ptr")
-
-    Rectangle(hdc, nLeftRect, nTopRect, nRightRect, nBottomRect) => DllCall("Gdi32\Rectangle", "Ptr", hdc, "Int", nLeftRect, "Int", nTopRect, "Int", nRightRect, "Int", nBottomRect, "Int")
-
-    SetTextColor(hdc, crColor) => DllCall("Gdi32\SetTextColor", "Ptr", hdc, "UInt", crColor, "UInt")
-
-    DrawText(hDC, lpchText, nCount, lpRect, uFormat) => DllCall("User32\DrawText", "Ptr", hDC, "Ptr", StrPtr(lpchText), "Int", nCount, "Ptr", lpRect, "UInt", uFormat, "Int")
-
-    CreateFont(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName) =>
-        DllCall("Gdi32\CreateFont", "Int", cHeight, "Int", cWidth, "Int", cEscapement, "Int", cOrientation, "Int", cWeight,
-        "UInt", bItalic, "UInt", bUnderline, "UInt", bStrikeOut, "UInt", iCharSet, "UInt", iOutPrecision, "UInt", iClipPrecision, 
-        "UInt", iQuality, "UInt", iPitchAndFamily, "Str", pszFaceName, "Ptr")
-}
-
-
-class EditBorder {
-    static WS_BORDER        := 0x00800000
-    static WS_EX_CLIENTEDGE := 0x00000200
-
-    static SWP_NOMOVE       := 0x0002
-    static SWP_NOSIZE       := 0x0001
-    static SWP_NOZORDER     := 0x0004
-    static SWP_FRAMECHANGED := 0x0020
-    static U_FLAGS          := EditBorder.SWP_NOMOVE | EditBorder.SWP_NOSIZE | EditBorder.SWP_NOZORDER | EditBorder.SWP_FRAMECHANGED
-
-    static WM_NCCALCSIZE := 0x0083
-    static WM_NCPAINT    := 0x0085
-
-
-    __New(edit, borderColor := 0x303030, borderWidth := 2) {
-        this.borderColor := borderColor
-        this.borderWidth := borderWidth
-        this.windowProcNew := CallbackCreate(ObjBindMethod(this, "WindowProc"), "", 4)
-        this.windowProcOld := DllCall(A_PtrSize = 8 ? "SetWindowLongPtr" : "SetWindowLong", "Ptr", edit.Hwnd, "Int", -4, "Ptr", this.windowProcNew, "Ptr")
-        
-        ; Нужно убрать стандартные стили границ чтобы винда не пыталась рисовать сови рамки.
-        DllCall("SetWindowLong", "Ptr", edit.Hwnd, "Int", -16, "Int", DllCall("GetWindowLong", "Ptr", edit.Hwnd, "Int", -16) & ~EditBorder.WS_BORDER)
-        DllCall("SetWindowLong", "Ptr", edit.Hwnd, "Int", -20, "Int", DllCall("GetWindowLong", "Ptr", edit.Hwnd, "Int", -20) & ~EditBorder.WS_EX_CLIENTEDGE)
-
-        ; Важно заставить окно пересчитать свои размеры - это вызовет WM_NCCALCSIZE, где мы зададим новую толщину рамки.
-        DllCall("SetWindowPos", "Ptr", edit.Hwnd, "Ptr", 0, "Int", 0, "Int", 0, "Int", 0, "Int", 0, "UInt", EditBorder.U_FLAGS)
-    }
-
-
-    WindowProc(hwnd, uMsg, wParam, lParam) {
-        if (uMsg = EditBorder.WM_NCCALCSIZE) { ; Пересчет размера рамки
-            if (wParam) { ; Если wParam = true, lParam содержит структуру NCCALCSIZE_PARAMS
-                NumPut(
-                    "Int", NumGet(lParam, 0,  "Int") + this.borderWidth, ; left
-                    "Int", NumGet(lParam, 4,  "Int") + this.borderWidth, ; top
-                    "Int", NumGet(lParam, 8,  "Int") - this.borderWidth, ; right
-                    "Int", NumGet(lParam, 12, "Int") - this.borderWidth, ; bottom
-                    lParam
-                )
-                return DllCall("CallWindowProc", "Ptr", this.windowProcOld, "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam)
-            }
-        }
-
-        if (uMsg = EditBorder.WM_NCPAINT) { ; Отрисовка рамки
-            hdc := DllCall("GetWindowDC", "Ptr", hwnd, "Ptr")
-            
-            DllCall("GetWindowRect", "Ptr", hwnd, "Ptr", rect := Buffer(16))
-            width  := NumGet(rect, 8,  "Int") - NumGet(rect, 0, "Int")
-            height := NumGet(rect, 12, "Int") - NumGet(rect, 4, "Int")
-            
-            hBrush := DllCall("CreateSolidBrush", "UInt", this.RgbToBgr(this.borderColor), "Ptr")
-            frame := Buffer(16)
-            
-            Loop this.borderWidth {
-                i := A_Index - 1
-                NumPut("Int", i, "Int", i, "Int", width - i, "Int", height - i, frame, 0)
-                DllCall("FrameRect", "Ptr", hdc, "Ptr", frame, "Ptr", hBrush)
-            }
-            
-            DllCall("DeleteObject", "Ptr", hBrush)
-            DllCall("ReleaseDC", "Ptr", hwnd, "Ptr", hdc)
-        }
-        return DllCall("CallWindowProc", "Ptr", this.windowProcOld, "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam)
-    }
-
-    RgbToBgr(rgbColor) => ((rgbColor & 0xFF) << 16) | (((rgbColor >> 8) & 0xFF) << 8) | ((rgbColor >> 16) & 0xFF)
-}
-
-
-Class GuiReSizer {
-    Static Call(GuiObj, WindowMinMax, GuiW, GuiH) {
-        ; Initial display of Gui use redraw to cleanup first positioning
-        Try
-            (GuiObj.Init)
-        Catch
-            GuiObj.Init := 3 ; Redraw twice and initialize abbreviations on Initial Call (called on initial Show)
-        ; Window minimize and maximize
-        If WindowMinMax = -1 ; Do nothing if window minimized
-            Return
-        If WindowMinMax = 1 ; Repeat if maximized
-            Repeat := true
-        ; Loop through all Controls of Gui
-        Loop 2 { ; Loop twice by default to calculate Anchor controls
-            For Hwnd, CtrlObj in GuiObj {
-                ;{ Initializations on First Call
-                If GuiObj.Init = 3 {
-                    Try CtrlObj.OriginX := CtrlObj.OX
-                    Try CtrlObj.OriginXP := CtrlObj.OXP
-                    Try CtrlObj.OriginY := CtrlObj.OY
-                    Try CtrlObj.OriginYP := CtrlObj.OYP
-                    Try CtrlObj.Width := CtrlObj.W
-                    Try CtrlObj.WidthP := CtrlObj.WP
-                    Try CtrlObj.Height := CtrlObj.H
-                    Try CtrlObj.HeightP := CtrlObj.HP
-                    Try CtrlObj.MinWidth := CtrlObj.MinW
-                    Try CtrlObj.MaxWidth := CtrlObj.MaxW
-                    Try CtrlObj.MinHeight := CtrlObj.MinH
-                    Try CtrlObj.MaxHeight := CtrlObj.MaxH
-                    Try CtrlObj.Function := CtrlObj.F
-                    Try CtrlObj.Cleanup := CtrlObj.C
-                    Try CtrlObj.Anchor := CtrlObj.A
-                    Try CtrlObj.AnchorIn := CtrlObj.AI
-                    If !CtrlObj.HasProp("AnchorIn")
-                        CtrlObj.AnchorIn := true
-                }
-                ; Initialize Current Positions and Sizes
-                CtrlObj.GetPos(&CtrlX, &CtrlY, &CtrlW, &CtrlH)
-                LimitX := AnchorW := GuiW, LimitY := AnchorH := GuiH, OffsetX := OffsetY := 0
-                ; Check for Anchor
-                If CtrlObj.HasProp("Anchor") {
-                    Repeat := true
-                    CtrlObj.Anchor.GetPos(&AnchorX, &AnchorY, &AnchorW, &AnchorH)
-                    If CtrlObj.HasProp("X") or CtrlObj.HasProp("XP")
-                        OffsetX := AnchorX
-                    If CtrlObj.HasProp("Y") or CtrlObj.HasProp("YP")
-                        OffsetY := AnchorY
-                    If CtrlObj.AnchorIn
-                        LimitX := AnchorW, LimitY := AnchorH
-                }
-                ; OriginX
-                If CtrlObj.HasProp("OriginX") and CtrlObj.HasProp("OriginXP")
-                    OriginX := CtrlObj.OriginX + (CtrlW * CtrlObj.OriginXP)
-                Else If CtrlObj.HasProp("OriginX") and !CtrlObj.HasProp("OriginXP")
-                    OriginX := CtrlObj.OriginX
-                Else If !CtrlObj.HasProp("OriginX") and CtrlObj.HasProp("OriginXP")
-                    OriginX := CtrlW * CtrlObj.OriginXP
-                Else
-                    OriginX := 0
-                ; OriginY
-                If CtrlObj.HasProp("OriginY") and CtrlObj.HasProp("OriginYP")
-                    OriginY := CtrlObj.OriginY + (CtrlH * CtrlObj.OriginYP)
-                Else If CtrlObj.HasProp("OriginY") and !CtrlObj.HasProp("OriginYP")
-                    OriginY := CtrlObj.OriginY
-                Else If !CtrlObj.HasProp("OriginY") and CtrlObj.HasProp("OriginYP")
-                    OriginY := CtrlH * CtrlObj.OriginYP
-                Else
-                    OriginY := 0
-                ; X
-                If CtrlObj.HasProp("X") and CtrlObj.HasProp("XP")
-                    CtrlX := Mod(LimitX + CtrlObj.X + (AnchorW * CtrlObj.XP) - OriginX, LimitX)
-                Else If CtrlObj.HasProp("X") and !CtrlObj.HasProp("XP")
-                    CtrlX := Mod(LimitX + CtrlObj.X - OriginX, LimitX)
-                Else If !CtrlObj.HasProp("X") and CtrlObj.HasProp("XP")
-                    CtrlX := Mod(LimitX + (AnchorW * CtrlObj.XP) - OriginX, LimitX)
-                ; Y
-                If CtrlObj.HasProp("Y") and CtrlObj.HasProp("YP")
-                    CtrlY := Mod(LimitY + CtrlObj.Y + (AnchorH * CtrlObj.YP) - OriginY, LimitY)
-                Else If CtrlObj.HasProp("Y") and !CtrlObj.HasProp("YP")
-                    CtrlY := Mod(LimitY + CtrlObj.Y - OriginY, LimitY)
-                Else If !CtrlObj.HasProp("Y") and CtrlObj.HasProp("YP")
-                    CtrlY := Mod(LimitY + AnchorH * CtrlObj.YP - OriginY, LimitY)
-                ; Width
-                If CtrlObj.HasProp("Width") and CtrlObj.HasProp("WidthP")
-                    (CtrlObj.Width > 0 and CtrlObj.WidthP > 0 ? CtrlW := CtrlObj.Width + AnchorW * CtrlObj.WidthP : CtrlW := CtrlObj.Width + AnchorW + AnchorW * CtrlObj.WidthP - CtrlX)
-                Else If CtrlObj.HasProp("Width") and !CtrlObj.HasProp("WidthP")
-                    (CtrlObj.Width > 0 ? CtrlW := CtrlObj.Width : CtrlW := AnchorW + CtrlObj.Width - CtrlX)
-                Else If !CtrlObj.HasProp("Width") and CtrlObj.HasProp("WidthP")
-                    (CtrlObj.WidthP > 0 ? CtrlW := AnchorW * CtrlObj.WidthP : CtrlW := AnchorW + AnchorW * CtrlObj.WidthP - CtrlX)
-                ; Height
-                If CtrlObj.HasProp("Height") and CtrlObj.HasProp("HeightP")
-                    (CtrlObj.Height > 0 and CtrlObj.HeightP > 0 ? CtrlH := CtrlObj.Height + AnchorH * CtrlObj.HeightP : CtrlH := CtrlObj.Height + AnchorH + AnchorH * CtrlObj.HeightP - CtrlY)
-                Else If CtrlObj.HasProp("Height") and !CtrlObj.HasProp("HeightP")
-                    (CtrlObj.Height > 0 ? CtrlH := CtrlObj.Height : CtrlH := AnchorH + CtrlObj.Height - CtrlY)
-                Else If !CtrlObj.HasProp("Height") and CtrlObj.HasProp("HeightP")
-                    (CtrlObj.HeightP > 0 ? CtrlH := AnchorH * CtrlObj.HeightP : CtrlH := AnchorH + AnchorH * CtrlObj.HeightP - CtrlY)
-                ; Min Max
-                (CtrlObj.HasProp("MinX") ? MinX := CtrlObj.MinX : MinX := -999999)
-                (CtrlObj.HasProp("MaxX") ? MaxX := CtrlObj.MaxX : MaxX := 999999)
-                (CtrlObj.HasProp("MinY") ? MinY := CtrlObj.MinY : MinY := -999999)
-                (CtrlObj.HasProp("MaxY") ? MaxY := CtrlObj.MaxY : MaxY := 999999)
-                (CtrlObj.HasProp("MinWidth") ? MinW := CtrlObj.MinWidth : MinW := 0)
-                (CtrlObj.HasProp("MaxWidth") ? MaxW := CtrlObj.MaxWidth : MaxW := 999999)
-                (CtrlObj.HasProp("MinHeight") ? MinH := CtrlObj.MinHeight : MinH := 0)
-                (CtrlObj.HasProp("MaxHeight") ? MaxH := CtrlObj.MaxHeight : MaxH := 999999)
-                CtrlX := MinMax(CtrlX, MinX, MaxX)
-                CtrlY := MinMax(CtrlY, MinY, MaxY)
-                CtrlW := MinMax(CtrlW, MinW, MaxW)
-                CtrlH := MinMax(CtrlH, MinH, MaxH)
-
-                CtrlObj.Move(CtrlX + OffsetX, CtrlY + OffsetY, CtrlW, CtrlH)
-                If GuiObj.Init or (CtrlObj.HasProp("Cleanup") and CtrlObj.Cleanup = true)
-                    CtrlObj.Redraw()
-                If CtrlObj.HasProp("Function")
-                    CtrlObj.Function(GuiObj) ; CtrlObj is hidden 'this' first parameter
-            }
-            If !IsSet(Repeat) ; Break loop if no Repeat is needed because of Anchor or Maximize
-                Break
-        }
-
-        If (GuiObj.Init := GuiObj.Init - 1 > 0) {
-            GuiObj.GetClientPos(, , &AnchorW, &AnchorH)
-            GuiReSizer(GuiObj, WindowMinMax, AnchorW, AnchorH)
-        }
-        If WindowMinMax = 1 ; maximized
-            GuiObj.Init := 2 ; redraw twice on next call after a maximize
-        MinMax(Num, MinNum, MaxNum) => Min(Max(Num, MinNum), MaxNum)
-    }
-
-    Static Opt(CtrlObj, Options) => GuiReSizer.Options(CtrlObj, Options)
-    Static Options(CtrlObj, Options) {
-        For Option in StrSplit(Options, " ") {
-            For Abbr, Cmd in Map(
-                "xp", "XP", "yp", "YP", "x", "X", "y", "Y",
-                "wp", "WidthP", "hp", "HeightP", "w", "Width", "h", "Height",
-                "minx", "MinX", "maxx", "MaxX", "miny", "MinY", "maxy", "MaxY",
-                "minw", "MinWidth", "maxw", "MaxWidth", "minh", "MinHeight", "maxh", "MaxHeight",
-                "oxp", "OriginXP", "oyp", "OriginYP", "ox", "OriginX", "oy", "OriginY")
-                If RegExMatch(Option, "i)^" Abbr "([\d.-]*$)", &Match) {
-                    CtrlObj.%Cmd% := Match.1
-                    Break
-                }
-
-            If SubStr(Option, 1, 1) = "o" {
-                Flags := SubStr(Option, 2)
-                If Flags ~= "i)l"           ; left
-                    CtrlObj.OriginXP := 0
-                If Flags ~= "i)c"           ; center (left to right)
-                    CtrlObj.OriginXP := 0.5
-                If Flags ~= "i)r"           ; right
-                    CtrlObj.OriginXP := 1
-                If Flags ~= "i)t"           ; top
-                    CtrlObj.OriginYP := 0
-                If Flags ~= "i)m"           ; middle (top to bottom)
-                    CtrlObj.OriginYP := 0.5
-                If Flags ~= "i)b"           ; bottom
-                    CtrlObj.OriginYP := 1
-            }
-        }
-    }
-
-    Static Now(GuiObj, Redraw := true, Init := 2) {
-        If Redraw
-            GuiObj.Init := Init
-        GuiObj.GetClientPos(, , &Width, &Height)
-        GuiReSizer(GuiObj, WindowMinMax := 1, Width, Height)
-    }
-}
-
-
-class CustomTitleBarWindow {
-    /**
-     * @param {GuiObj} gui
-     * @param {Color} colorTheme - Цвет заголовка в формате RGB.
-     * @param {Integer} titleBarHeight - Высота заголовка в пикселях.
-     * @param {Integer} showSystemMenu - Будет ли отображенно системно меню, при клике ПКМ по заголовку [true || false].
-     * @param {Integer} winLimitMaximized - У всех окон в WinApi заголовок окна уходят на 7-8 пикселей при максимальном изменение размера окна. Это можно исправить:
-     * Имейте ввиду что верхяя граница окна являеться клиентской областью окна, то есть там можно размещать контролы. Учитывайте это при выборе флага `winLimitMaximized`.
-     * ```ahk
-     * winLimitMaximized := 0 ; Если установить значение "0" окно будет вести себя как обычно.
-     * winLimitMaximized := 1 ; Если установить значение "1" то при максимальном изменение размера окна, заголовок не будет уходить за экран (включая границу).
-     * winLimitMaximized := 2 ; Если установить значение "2" окно будет вести себя аналогично [winLimitMaximized := 1], за исключением того что верхяя граница окна будет уходить за экран.
-     * ```
-     * @param {Integer} fixTopBorder - Если `fixTopBorderColor := false`, то цвет верхней границы будет равен [цвет заголовка `colorTheme` + интерполяция цвета + прозрачность]. Если `fixTopBorderColor := true`, то граница будет иметь системный цвет [Примерно "0x80000000"].
-     */
-    __New(gui, colorTheme := "000000", titleBarHeight := 31, showSystemMenu := true, winLimitMaximized := 1, fixTopBorderColor := false) {
-        this.hwnd              := gui.hwnd
-        this.gui               := gui
-        this.titleBarHeight    := titleBarHeight
-        this.colorTheme        := colorTheme
-        this.showSystemMenu    := showSystemMenu
-        this.winLimitMaximized := winLimitMaximized
-        this.fixTopBorderColor := fixTopBorderColor
-        this.Create()
-    }
-
-
-    Create() {
-        DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", this.hwnd, "UInt", 20, "Ptr*", 1, "UInt", 4)
-        this.ExtendFrameIntoClientArea()
-        this.SetupMessageHandlers()
-        this.DrawTitle()
-        this.RefreshFrame()
-    }
-
-
-    DrawTitle() {
-        static SM_CXVIRTUALSCREEN := DllCall("GetSystemMetrics", "Int", 78) + 50 ; Ширина виртуального экрана в пикселях + запас.
-        this.title := this.gui.AddText("x0 y0 w" SM_CXVIRTUALSCREEN " h" this.titleBarHeight " Background" this.colorTheme)
-        if (this.fixTopBorderColor) {
-            borderTitle := this.gui.AddText("x0 y0 w" SM_CXVIRTUALSCREEN " h1 Background000000")
-            borderTitle.Redraw()
-        }
-        if (this.winLimitMaximized) {
-            this.gui.OnEvent("Size", (*) {
-                if (DllCall("IsZoomed", "Ptr", this.hwnd, "Int")) {
-                    this.WinMaximizedOffsetWorkArea()
-                }
-            })
-        }
-    }
-
-
-    GetCoord(lParam, &x, &y, mode := "Screen") {
-        x := (x := lParam & 0xFFFF) > 0x7FFF ? x - 0x10000 : x
-        y := (y := (lParam >> 16) & 0xFFFF) > 0x7FFF ? y - 0x10000 : y
-
-        if (mode = "Client") {
-            pt := Buffer(8), NumPut("Int", x, "Int", y, pt)
-            DllCall("ScreenToClient", "Ptr", this.hwnd, "Ptr", pt)
-            x := NumGet(pt, 0, "Int"), y := NumGet(pt, 4, "Int")
-        }
-    }
-
-
-    GetClientRect(&width, &height) {
-        DllCall("GetClientRect", "Ptr", this.hwnd, "Ptr", rect := Buffer(16))
-        width := NumGet(rect, 8, "Int"), height := NumGet(rect, 12, "Int")
-    }
-
-
-    ; Когда окно развёрнуто, часть уходит за экран
-    GetMaximizedOffset(dpi) {
-        frameY  := DllCall("User32\GetSystemMetricsForDpi", "Int", 33, "UInt", dpi, "Int")  ; SM_CYFRAME
-        padding := DllCall("User32\GetSystemMetricsForDpi", "Int", 92, "UInt", dpi, "Int")  ; SM_CXPADDEDBORDER
-        return frameY + padding  ; ~7-8 пикселей
-    }
-
-
-    WinMaximizedOffsetWorkArea() {
-        dpi := DllCall("User32\GetDpiForWindow", "Ptr", this.hwnd, "UInt")
-        minMaxOffset := this.GetMaximizedOffset(dpi)
-
-        monitor := DllCall("MonitorFromWindow", "Ptr", this.hwnd, "UInt", 2) ; MONITOR_DEFAULTTONEAREST
-        mi := Buffer(40), NumPut("UInt", 40, mi) ; cbSize
-        DllCall("GetMonitorInfo", "Ptr", monitor, "Ptr", mi)
-
-        workLeft   := NumGet(mi, 20, "Int") ; rcWork.left
-        workTop    := NumGet(mi, 24, "Int") ; rcWork.top
-        workRight  := NumGet(mi, 28, "Int") ; rcWork.right
-        workBottom := NumGet(mi, 32, "Int") ; rcWork.bottom
-        
-        workWidth  := workRight - workLeft
-        workHeight := workBottom - workTop
-        threshold  := minMaxOffset
-        
-        this.GetClientRect(&width, &height)
-        if (width >= workWidth - threshold && height >= workHeight - threshold) {
-            this.gui.Move(workLeft - minMaxOffset, workTop -= (this.winLimitMaximized = 2) ? 1 : 0)
-            ;return 1
-        }
-        ;return 0
-    }
-
-
-    RefreshFrame() {
-        DllCall("SetWindowPos", "Ptr", this.hwnd, "Ptr", 0, "Int", 0, "Int", 0, "Int", 0, "Int", 0, "UInt", 0x0027) ; SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
-    }
-
-    ExtendFrameIntoClientArea() {
-        ; высота заголовка в физические пиксели для DWM
-        dpi := DllCall("User32\GetDpiForWindow", "Ptr", this.hwnd, "UInt")
-        physicalHeight := Round(this.titleBarHeight * (dpi / 96.0))
-        margins := Buffer(16), NumPut("Int", 0, "Int", 0, "Int", physicalHeight, "Int", 0, margins)
-        DllCall("dwmapi\DwmExtendFrameIntoClientArea", "Ptr", this.hwnd, "Ptr", margins)
-    }
-
-
-    SetupMessageHandlers() {
-        OnMessage(0x0083, ObjBindMethod(this, "WM_NCCALCSIZE"))
-        OnMessage(0x0084, ObjBindMethod(this, "WM_NCHITTEST"))
-        if (this.showSystemMenu)
-            OnMessage(0x00A5, ObjBindMethod(this, "WM_NCRBUTTONUP"))
-        OnMessage(0x02A2, ObjBindMethod(this, "WM_NCMOUSELEAVE"))
-        ;OnMessage(0x0005, ObjBindMethod(this, "WM_SIZE"))
-        OnMessage(0x02E0, ObjBindMethod(this, "WM_DPICHANGED")) ; обработка смены монитора/DPI, чтобы рамка перерисовывалась
-    }
-
-
-    WM_NCCALCSIZE(wParam, lParam, msg, hwnd) {
-        if (hwnd != this.hwnd)
-            return
-
-        if (wParam) { ; системные метрики с учетом масштаба текущего экрана
-            dpi     := DllCall("User32\GetDpiForWindow", "Ptr", hwnd, "UInt")
-            frameX  := DllCall("User32\GetSystemMetricsForDpi", "Int", 32, "UInt", dpi, "Int") ; SM_CXFRAME
-            frameY  := DllCall("User32\GetSystemMetricsForDpi", "Int", 33, "UInt", dpi, "Int") ; SM_CYFRAME
-            padding := DllCall("User32\GetSystemMetricsForDpi", "Int", 92, "UInt", dpi, "Int") ; SM_CXPADDEDBORDER
-            
-            NumPut("Int", NumGet(lParam, 0,  "Int") + frameX + padding, lParam, 0)  ; left
-            NumPut("Int", NumGet(lParam, 4,  "Int"),  lParam, 4)                    ; top (без изменений)
-            NumPut("Int", NumGet(lParam, 8,  "Int") - frameX - padding, lParam, 8)  ; right
-            NumPut("Int", NumGet(lParam, 12, "Int") - frameY - padding, lParam, 12) ; bottom
-            return 0
-        }
-    }
-
-
-    WM_NCHITTEST(wParam, lParam, msg, hwnd) {
-        if (hwnd != this.hwnd)
-            return
-
-        if DllCall("dwmapi\DwmDefWindowProc", "Ptr", hwnd, "UInt", msg, "Ptr", wParam, "Ptr", lParam, "Ptr", lResult := Buffer(8)) ; DWM сначала для hover эффектов кнопок
-            return NumGet(lResult, 0, "Ptr")
-
-        this.GetCoord(lParam, &clientX, &clientY, "Client") ; Клиентские координаты
-        this.GetClientRect(&width, &height) ; Размер окна (W / H)
-
-        ; Смещение GUI относительно рабочей области "A" монитора. Если окно развернуто, то весь заголовок HTCAPTION.
-        ; FIX: Зоны HitTest рассчитываются в физических координатах
-        dpi := DllCall("User32\GetDpiForWindow", "Ptr", hwnd, "UInt")
-        scale := dpi / 96.0
-        physicalTitleBarHeight := Round(this.titleBarHeight * scale)
-        borderSize := Round(5 * scale) ; Размер области resize
-
-        if (this.winLimitMaximized && DllCall("IsZoomed", "Ptr", this.hwnd, "Int")) {
-            return clientY < physicalTitleBarHeight ? 2 : 1
-        }
-
-        switch {
-            case clientY < borderSize && clientX < borderSize                  : return 13 ; HTTOPLEFT
-            case clientY < borderSize && clientX > width - borderSize          : return 14 ; HTTOPRIGHT
-            case clientY < borderSize                                          : return 12 ; HTTOP
-            case clientY > height - borderSize && clientX < borderSize         : return 16 ; HTBOTTOMLEFT
-            case clientY > height - borderSize && clientX > width - borderSize : return 17 ; HTBOTTOMRIGHT
-            case clientY > height - borderSize                                 : return 15 ; HTBOTTOM
-            case clientX < borderSize                                          : return 10 ; HTLEFT
-            case clientX > width - borderSize                                  : return 11 ; HTRIGHT
-            case clientY < this.titleBarHeight                                 : return 2  ; HTCAPTION
-        }
-        return 1 ; HTCLIENT
-    }
-
-
-    WM_NCRBUTTONUP(wParam, lParam, msg, hwnd) {
-        if (hwnd != this.hwnd)
-            return
-
-        static TPM_RETURNCMD   := 0x0100
-        static TPM_RIGHTBUTTON := 0x0002
-        static WM_SYSCOMMAND   := 0x0112
-        static MF_ENABLED      := 0x0000
-        static MF_GRAYED       := 0x0001
-        static SC_RESTORE      := 0xF120
-        static SC_MOVE         := 0xF010
-        static SC_SIZE         := 0xF000
-        static SC_MINIMIZE     := 0xF020
-        static SC_MAXIMIZE     := 0xF030
-        static SC_CLOSE        := 0xF060
-        static HTCAPTION       := 2
-        
-        if (wParam = HTCAPTION) {
-            this.GetCoord(lParam, &x, &y, "Screen")
-            hMenu := DllCall("GetSystemMenu", "Ptr", this.hwnd, "Int", 0, "Ptr")
-            isMaximized := DllCall("IsZoomed", "Ptr", this.hwnd, "Int")
-            isMinimized := DllCall("IsIconic", "Ptr", this.hwnd, "Int")
-            DllCall("EnableMenuItem", "Ptr", hMenu, "UInt", SC_RESTORE, "UInt", (isMaximized || isMinimized) ? MF_ENABLED : MF_GRAYED)
-            DllCall("EnableMenuItem", "Ptr", hMenu, "UInt", SC_MOVE, "UInt", isMaximized ? MF_GRAYED : MF_ENABLED)
-            DllCall("EnableMenuItem", "Ptr", hMenu, "UInt", SC_SIZE, "UInt", isMaximized ? MF_GRAYED : MF_ENABLED)
-            DllCall("EnableMenuItem", "Ptr", hMenu, "UInt", SC_MAXIMIZE, "UInt", isMaximized ? MF_GRAYED : MF_ENABLED)
-            ;DllCall("EnableMenuItem", "Ptr", hMenu, "UInt", SC_CLOSE, "UInt", MF_ENABLED)
-            cmd := DllCall("TrackPopupMenu", "Ptr", hMenu, "UInt", TPM_RETURNCMD | TPM_RIGHTBUTTON, "Int", x, "Int", y, "Int", 0, "Ptr", this.hwnd, "Ptr", 0, "UInt")
-
-            if (cmd)
-                PostMessage(WM_SYSCOMMAND, cmd, 0,, this.hwnd)
-            return 0
-        }
-    }
-
-
-    ; Если dwmDefWindowProc не вызывается для сообщения WM_NCMOUSELEAVE, DWM не удаляет выделение с кнопок заголовка.
-    WM_NCMOUSELEAVE(wParam, lParam, msg, hwnd) {
-        if (hwnd != this.hwnd)
-            return
-        if DllCall("dwmapi\DwmDefWindowProc", "Ptr", hwnd, "UInt", msg, "Ptr", wParam, "Ptr", lParam, "Ptr", lResult := Buffer(8))
-            return NumGet(lResult, 0, "Ptr")
-        return 0
-    }
-
-
-    WM_SIZE(wParam, lParam, msg, hwnd) {
-        if (hwnd != this.hwnd)
-            return
-
-        if (this.winLimitMaximized && wParam = 2) { ; SIZE_MAXIMIZED
-            this.WinMaximizedOffsetWorkArea()
-        }
-    }
-
-
-    ; Обработчик перемещения окна на монитор с другим масштабом
-    WM_DPICHANGED(wParam, lParam, msg, hwnd) {
-        if (hwnd != this.hwnd)
-            return
-        this.ExtendFrameIntoClientArea()
-    }
-}
-
-
-class DarkMode {
-    __New() {
-        uxtheme := DllCall("kernel32\GetModuleHandle", "Str", "uxtheme", "Ptr")
-        DllCall(DllCall("kernel32\GetProcAddress", "Ptr", uxtheme, "Ptr", 135, "Ptr"), "Int", 2) ; SetPreferredAppMode
-        DllCall(DllCall("kernel32\GetProcAddress", "Ptr", uxtheme, "Ptr", 136, "Ptr"))           ; FlushMenuThemes
-
-        ; OnMessage(0x0134, this.WM_CTLCOLORLISTBOX.Bind(this))
-    }
-
-    ; WM_CTLCOLORLISTBOX(wParam, lParam, msg, hwnd) {
-    ;     DllCall("gdi32\SetTextColor", "ptr", wParam, "uint", "0xd1bea3")
-    ;     DllCall("gdi32\SetDCBrushColor", "ptr", wParam, "uint", "0x141414")
-    ;     return DllCall("gdi32\GetStockObject", "int", 18, "ptr")
-    ; }
-}
-
-
-class __CustomListView extends Gui.ListView {
-    class ListViewSubclass {
-        HoverHeaderItem := -1 ; индекс колонки под мышью
-        HoverLVItem     := -1 
-        HoverLViSubItem := -1 
-        IsMouseTracking := false 
-
-        __New(LV, headerBkColor, gridColor, borderColor) {
-            this.LV                  := LV
-
-            this.realItemHeight := SendMessage(0x1033, 1, 0, this.LV.hwnd) >> 16 ; высота элементов LVM_GETITEMSPACING := 0x1033
-            this.headerHeight   := 0
-            if (!this.headerHeight) {
-                headerRect := Buffer(16, 0)
-                GetWindowRect(SendMessage(0x101F, 0, 0, this.LV.hwnd), headerRect) ; LVM_GETHEADER
-                this.headerHeight := NumGet(headerRect, 12, "Int") - NumGet(headerRect, 4, "Int")
-            }
-
-            this.hHeader             := SendMessage(0x101F, 0, 0, this.LV.Hwnd) ; LVM_GETHEADER
-            this.headerBkColor       := headerBkColor
-            this.gridColor           := gridColor
-            this.borderColor         := borderColor
-            this.windowProcNewHeader := CallbackCreate(this.HeaderSubclassProc.Bind(this), "", 4)
-            this.windowProcOldHeader := __CustomListView.SetWindowLong(this.hHeader, -4, this.windowProcNewHeader)
-            this.windowProcNewLV     := CallbackCreate(this.ListViewSubclassProc.Bind(this), "", 4)
-            this.windowProcOldLV     := __CustomListView.SetWindowLong(this.LV.hwnd, -4, this.windowProcNewLV)
-        }
-
-
-        GetColumnBoundaries(hHeader) {
-            static HDM_GETITEMCOUNT := 0x1200, HDM_ORDERTOINDEX := 0x120F, HDM_GETITEMRECT := 0x1207
-            boundaries := []
-            loop (SendMessage(HDM_GETITEMCOUNT, 0, 0, hHeader)) { ; count
-                index := SendMessage(HDM_ORDERTOINDEX, A_Index - 1, 0, hHeader)
-                rect := Buffer(16, 0)
-                SendMessage(HDM_GETITEMRECT, index, rect.Ptr, hHeader)
-                boundaries.Push(NumGet(rect, 8, "Int") - 1) ; правая граница этой колонки (-1 что бы линии заголовка совпадали с нижними линиями)
-            }
-            return boundaries ; массив X-координат вертикальных линий, уже в порядке слева направо
-        }
-
-
-        GetRowBoundaries(hwnd) {
-            static LVM_GETITEMRECT := 0x100E, LVM_GETTOPINDEX := 0x1027, LVM_GETCOUNTPERPAGE := 0x1028, LVM_GETITEMCOUNT := 0x1004, LVIR_BOUNDS := 0
-            topIndex    := SendMessage(LVM_GETTOPINDEX, 0, 0, hwnd)
-            perPage     := SendMessage(LVM_GETCOUNTPERPAGE, 0, 0, hwnd)
-            total       := SendMessage(LVM_GETITEMCOUNT, 0, 0, hwnd)
-            lastVisible := Min(topIndex + perPage, total - 1)
-            boundaries  := []
-            loop (lastVisible - topIndex + 1) {
-                i := topIndex + A_Index - 1
-                rect := Buffer(16, 0)
-                NumPut("Int", LVIR_BOUNDS, rect, 0) ; обязательно перед вызовом
-                SendMessage(LVM_GETITEMRECT, i, rect.Ptr, hwnd)
-                boundaries.Push(NumGet(rect, 12, "Int")) ; bottom этой строки
-            }
-
-            if (boundaries.Length < perPage) { ; Если количесво элементов меньше чем в себя может вместить LV, то горизонтальные линии сетки все равно будет нарисована
-                boundaries := []
-                loop (perPage + 1) { ; +1 - это запас
-                    boundaries.Push(A_Index * this.realItemHeight + (this.headerHeight - this.realItemHeight))
-                }
-            }
-            return boundaries
-        }
-
-
-        GetHeaderOffsetX(hHeader, hLV) {
-            pt := Buffer(8, 0) ; POINT {x, y}
-            DllCall("MapWindowPoints", "Ptr", hHeader, "Ptr", hLV, "Ptr", pt, "UInt", 1, "Int")
-            return NumGet(pt, 0, "Int")
-        }
-
-
-        ListViewSubclassProc(hwnd, uMsg, wParam, lParam) {
-            if (uMsg == 0x000F) { ; WM_PAINT
-                res := __CustomListView.CallWindowProc(this.windowProcOldLV, hwnd, uMsg, wParam, lParam)
-
-                hdc    := __CustomListView.GetDC(hwnd)
-                hPen   := __CustomListView.CreatePen(0, 1, this.gridColor) ; PS_SOLID
-                oldPen := __CustomListView.SelectObject(hdc, hPen)
-
-                clientRect := Buffer(16, 0)
-                __CustomListView.GetClientRect(hwnd, clientRect)
-                right  := NumGet(clientRect, 8,  "Int")
-                bottom := NumGet(clientRect, 12, "Int")
-
-                headerRect := Buffer(16, 0)
-                __CustomListView.GetWindowRect(this.hHeader, headerRect)
-                headerHeight := NumGet(headerRect, 12, "Int") - NumGet(headerRect, 4, "Int")
-
-                for y in this.GetRowBoundaries(hwnd) {
-                    if (y > headerHeight) { ; рисование ниже заголовка
-                        __CustomListView.MoveToEx(hdc, 0, y, 0)
-                        __CustomListView.LineTo(hdc, right, y)
-                    }
-                }
-
-                ; вертикальные линии начинай от headerHeight, а не от 0:
-                offsetX := this.GetHeaderOffsetX(this.hHeader, hwnd)
-                for x in this.GetColumnBoundaries(this.hHeader) {
-                    realX := x + offsetX
-                    __CustomListView.MoveToEx(hdc, realX, headerHeight, 0) ; то же ниже заголовка
-                    __CustomListView.LineTo(hdc, realX, bottom)
-                }
-
-                __CustomListView.SelectObject(hdc, oldPen)
-                __CustomListView.DeleteObject(hPen)
-                __CustomListView.ReleaseDC(hwnd, hdc)
-
-                return res
-            }
-
-            ; if (uMsg == 0x0083) {
-            ;     style := __CustomListView.GetWindowLong(hwnd, -16) ; GWL_STYLE = -16
-            ;     if (style & 0x00100000) { ; WS_HSCROLL = 0x00100000
-            ;     __CustomListView.SetWindowLong(hwnd, -16, style & ~0x00100000)
-            ;     }
-            ; }
-
-            ; else if (uMsg == 0x007C) {
-            ;     if (wParam == -16) { ; GWL_STYLE
-            ;         styleNew := NumGet(lParam, 4, "UInt") ; STYLESTRUCT
-            ;         if (styleNew & 0x00100000) {
-            ;             NumPut("UInt", styleNew & ~0x00100000, lParam, 4) ; del WS_HSCROLL
-            ;         }
-            ;     }
-            ; }
-
-            if (uMsg == 0x0085) { ; WM_NCPAINT
-                res := __CustomListView.CallWindowProc(this.windowProcOldLV, hwnd, uMsg, wParam, lParam)
-                hdc  := __CustomListView.GetWindowDC(hwnd)
-                rect := Buffer(16)
-                __CustomListView.GetWindowRect(hwnd, rect)
-                width  := NumGet(rect, 8, "Int") - NumGet(rect, 0, "Int")
-                height := NumGet(rect, 12, "Int") - NumGet(rect, 4, "Int")
-
-                hBrush   := __CustomListView.GetStockObject(5)
-                hPen     := __CustomListView.CreatePen(0, 3, this.borderColor)
-                oldBrush := __CustomListView.SelectObject(hdc, hBrush)
-                oldPen   := __CustomListView.SelectObject(hdc, hPen)
-
-                __CustomListView.Rectangle(hdc, 0, 0, width, height)
-                __CustomListView.SelectObject(hdc, oldBrush)
-                __CustomListView.SelectObject(hdc, oldPen)
-                __CustomListView.DeleteObject(hPen)
-                __CustomListView.ReleaseDC(hwnd, hdc)
-                return res
-            }
-
-            if (uMsg == 0x0200) { ; WM_MOUSEMOVE
-                x := lParam << 48 >> 48
-                y := lParam << 32 >> 48
-                NumPut("Int", x, "Int", y, HitTest := Buffer(20, 0)) ; LVHITTESTINFO
-
-                SendMessage(0x1039, 0, HitTest.Ptr, hwnd) ; LVM_SUBITEMHITTEST = 0x1039
-                flags    := NumGet(HitTest, 8, "UInt")
-                iItem    := NumGet(HitTest, 12, "Int")
-                iSubItem := NumGet(HitTest, 16, "Int")
-                
-                if (this.HoverLVItem != iItem || this.HoverLViSubItem != iSubItem) {
-                    this.HoverLVItem     := iItem
-                    this.HoverLViSubItem := iSubItem
-                    __CustomListView.InvalidateRect(hwnd, 0, 0) ; Форсируем CustomDraw
-                    
-                    static TME := Buffer(8 + A_PtrSize + 4, 0)
-                    NumPut("UInt", TME.Size, "UInt", 2, "Ptr", hwnd, TME)
-                    DllCall("TrackMouseEvent", "Ptr", TME)
-                }
-            }
-            else if (uMsg == 0x02A3) { ; WM_MOUSELEAVE
-                if (this.HoverLVItem != -1) {
-                    this.HoverLVItem := -1
-                    __CustomListView.InvalidateRect(hwnd, 0, 0)
-                }
-            }
-
-            if (uMsg == 0x020A || uMsg == 0x0115 || (uMsg == 0x0100 && wParam >= 0x21 && wParam <= 0x28)) { ; 0x0115 = WM_VSCROLL, 0x020A = WM_MOUSEWHEEL, VK_PRIOR..VK_DOWN
-                ; res := __CustomListView.CallWindowProc(this.windowProcOldLV, hwnd, uMsg, wParam, lParam)
-                ; Critical(-1)
-                __CustomListView.InvalidateRect(hwnd, 0, 0) ; крч это фиксит баг с лишней линией в заголовке LV, я хз как это по нормальному реализовать, но вроде это работает
-                ; return res
-            }
-
-            if (uMsg == 0x0114 || (uMsg == 0x0100 && wParam >= 0x21 && wParam <= 0x28)) { ; 0x0114 = WM_HSCROLL, VK_PRIOR..VK_DOWN
-                res := __CustomListView.CallWindowProc(this.windowProcOldLV, hwnd, uMsg, wParam, lParam)
-                __CustomListView.InvalidateRect(hwnd, 0, 0)
-                return res
-            }
-
-            return __CustomListView.CallWindowProc(this.windowProcOldLV, hwnd, uMsg, wParam, lParam)
-        }
-
-
-        HeaderSubclassProc(hwnd, uMsg, wParam, lParam) {
-            if (uMsg == 0x000F) { ; WM_PAINT
-                res := __CustomListView.CallWindowProc(this.windowProcOldHeader, hwnd, uMsg, wParam, lParam)
-                
-                ; рисуем пустую область поверх
-                hdc := __CustomListView.GetDC(hwnd)
-                rect := Buffer(16, 0)
-                __CustomListView.GetClientRect(hwnd, rect)
-                
-                ; где заканчивается последняя колонка
-                count := SendMessage(0x1200, 0, 0, hwnd) ; HDM_GETITEMCOUNT
-                if (count > 0) {
-                    lastIndex := SendMessage(0x120F, count - 1, 0, hwnd) ; HDM_ORDERTOINDEX(order = count-1) реальный index
-                    itemRect := Buffer(16, 0)
-                    SendMessage(0x1207, lastIndex, itemRect, hwnd) ; HDM_GETITEMRECT
-                    lastRight := NumGet(itemRect, 8, "Int")
-                    NumPut("Int", lastRight, rect, 0) ; Смещаем левую границу заливки к концу последней колонки
-                }
-                
-                ; Если пустое место реально есть (левая граница меньше правой)
-                if (NumGet(rect, 0, "Int") < NumGet(rect, 8, "Int")) {
-                    hBrush := __CustomListView.CreateSolidBrush(this.headerBkColor)
-                    __CustomListView.FillRect(hdc, rect, hBrush)
-                    __CustomListView.DeleteObject(hBrush)
-                }
-                __CustomListView.ReleaseDC(hwnd, hdc)
-
-                return res
-            }
-
-            if (uMsg == 0x0200) { ; WM_MOUSEMOVE
-                x := lParam << 48 >> 48
-                y := lParam << 32 >> 48
-                NumPut("Int", x, "Int", y, HitTest := Buffer(16, 0))
-                
-                SendMessage(0x1206, 0, HitTest, hwnd) ; HDM_HITTEST
-                flags   := NumGet(HitTest, 8, "UInt")
-                item    := NumGet(HitTest, 12, "Int")
-                newItem := (flags & 0x0002) ? item : -1 ; (HHT_ONHEADER) - мышь на самом тексте/фоне заголовка. Если мышь на разделителе (ресайз), флаг будет другим.
-                
-                if (this.HoverHeaderItem != newItem) {
-                    this.HoverHeaderItem := newItem
-                    __CustomListView.InvalidateRect(hwnd, 0, 0)
-                    static TME := Buffer(8 + A_PtrSize + 4, 0)
-                    NumPut("UInt", TME.Size, "UInt", 2, "Ptr", hwnd, TME) ; (TME_LEAVE = 2)
-                    __CustomListView.TrackMouseEvent(TME)
-                }
-            }
-            else if (uMsg == 0x02A3) { ; WM_MOUSELEAVE
-                if (this.HoverHeaderItem != -1) {
-                    this.HoverHeaderItem := -1
-                    __CustomListView.InvalidateRect(hwnd, 0, 0)
-                }
-            }
-
-            return __CustomListView.CallWindowProc(this.windowProcOldHeader, hwnd, uMsg, wParam, lParam)
-        }
-    }
-
-    static CDDS_POSTERASE     := 0x00000004
-    static CDDS_POSTPAINT     := 0x00000002
-    static CDDS_PREERASE      := 0x00000003
-    static CDDS_PREPAINT      := 0x00000001
-    static CDDS_ITEM          := 0x00010000
-    static CDDS_ITEMPOSTERASE := this.CDDS_ITEM | this.CDDS_POSTERASE
-    static CDDS_ITEMPOSTPAINT := this.CDDS_ITEM | this.CDDS_POSTPAINT
-    static CDDS_ITEMPREERASE  := this.CDDS_ITEM | this.CDDS_PREERASE
-    static CDDS_ITEMPREPAINT  := this.CDDS_ITEM | this.CDDS_PREPAINT
-    static CDDS_SUBITEM       := 0x00020000
-
-    static CDRF_DODEFAULT         := 0x00000000
-    static CDRF_NEWFONT           := 0x00000002
-    static CDRF_SKIPDEFAULT       := 0x00000004
-    static CDRF_DOERASE           := 0x00000008
-    static CDRF_NOTIFYPOSTPAINT   := 0x00000010
-    static CDRF_NOTIFYITEMDRAW    := 0x00000020
-    static CDRF_NOTIFYSUBITEMDRAW := 0x00000020
-    static CDRF_NOTIFYPOSTERASE   := 0x00000040
-    static CDRF_SKIPPOSTPAINT     := 0x00000100
-
-    static LVM_GETHEADER := 0x101F
-    static NM_CUSTOMDRAW := -12
-    static WM_NOTIFY     := 0x4E
-
-    static CDIS_SELECTED := 0x0001
-    static CDIS_HOT      := 0x0040
-
-    static uniqueHwnd := Map()
-
-    static __New() => super.Prototype.SetTheme := this.SetTheme.Bind(this)
-
-
-    static SetTheme(LV, headerBkColor := "0x238f35", headerTextColor := "0xffffff", hoverHeader := {SELECTED: "", HOT: ""}, lvBkColor := "0x101010", lvTextColor := "0x00ccff", gridColor := "0xFF0000", hoverLV := {SELECTED: "", HOT: ""}, borderColor := "0x303030") {
-        hHeader := SendMessage(this.LVM_GETHEADER, 0, 0, LV.hwnd)
-        if (!this.uniqueHwnd.Has(hHeader)) {
-            LV.Opt("Background" headerBkColor " +LV" 0x10000) ; LVS_EX_DOUBLEBUFFER
-            this.SetWindowTheme(hHeader, "DarkMode_ItemsView")
-            this.SetWindowTheme(lv.Hwnd, "DarkMode_Explorer")
-            this.uniqueHwnd[hHeader] := {subclass: __CustomListView.ListViewSubclass(LV, headerBkColor, gridColor, borderColor)}
-            LV.OnNotify(this.NM_CUSTOMDRAW, (gCtrl, lParam)           => this.ListViewCustomDraw(gCtrl, lParam))
-            LV.OnMessage(this.WM_NOTIFY, (gCtrl, wParam, lParam, Msg) => this.HeaderCustomDraw(hHeader, wParam, lParam, Msg))
-        }
-
-        this.uniqueHwnd[hHeader].headerBkColor     := headerBkColor
-        this.uniqueHwnd[hHeader].headerTextColor   := headerTextColor
-        this.uniqueHwnd[hHeader].hoverHeaderSelect := hoverHeader.SELECTED
-        this.uniqueHwnd[hHeader].hoverHeaderHot    := hoverHeader.HOT
-        this.uniqueHwnd[hHeader].lvBkColor         := lvBkColor
-        this.uniqueHwnd[hHeader].lvTextColor       := lvTextColor
-        this.uniqueHwnd[hHeader].gridColor         := gridColor
-        this.uniqueHwnd[hHeader].hoverLVSelect     := hoverLV.SELECTED
-        this.uniqueHwnd[hHeader].hoverLVHot        := hoverLV.HOT
-    }
-
-
-    static ListViewCustomDraw(gCtrl, lParam) {
-        static o     := this.NMLVCUSTOMDRAW()
-        dwDrawStage  := NumGet(lParam, o.nmcd.dwDrawStage,  "UInt")
-        switch (dwDrawStage) {
-            case this.CDDS_PREPAINT:
-                return this.CDRF_NOTIFYITEMDRAW | this.CDRF_NOTIFYSUBITEMDRAW
-
-            case this.CDDS_ITEMPREPAINT:
-                return this.CDRF_NOTIFYSUBITEMDRAW
-
-            case this.CDDS_SUBITEM | this.CDDS_ITEMPREPAINT:
-                dwItemSpec := NumGet(lParam, o.nmcd.dwItemSpec,   "Ptr")
-                uItemState := NumGet(lParam, o.nmcd.uItemState,   "UInt")
-                iSubItem   := NumGet(lParam, o.iSubItem,          "Int")
-                hHeader    := SendMessage(this.LVM_GETHEADER, 0, 0, gCtrl.hwnd)
-                info       := this.uniqueHwnd.Get(hHeader, 0)
-                if (!info)
-                    return this.CDRF_DODEFAULT
-
-                realState := SendMessage(0x102C, dwItemSpec, 0x0002, gCtrl.hwnd) ; LVM_GETITEMSTATE = 0x102C, LVIS_SELECTED = 0x0002
-                ; isSelected := (realState & 2 && dwItemSpec == this.subclass.HoverLVItem && iSubItem == this.subclass.HoverLViSubItem)
-                isSelected := (realState & 2)
-                isHovered  := (dwItemSpec == info.subclass.HoverLVItem && iSubItem == info.subclass.HoverLViSubItem)
-            
-                bkColor := info.lvBkColor
-                if (isSelected)
-                    bkColor := info.hoverLVSelect != "" ? info.hoverLVSelect : this.BrightenColor(bkColor, -40)
-                else if (isHovered)
-                    bkColor := info.hoverLVHot != "" ? info.hoverLVHot : this.BrightenColor(bkColor, 40)
-
-                NumPut("UInt", uItemState & ~0x0001 & ~0x0010, lParam, o.nmcd.uItemState) ; убиает синею рамку выделения CDIS_SELECTED (0x0001) и CDIS_FOCUS (0x0010)
-                NumPut("UInt", this.RGBtoBGR(info.lvTextColor ?? 0), lParam, o.clrText)
-                NumPut("UInt", this.RGBtoBGR(bkColor          ?? 0), lParam, o.clrTextBk)
-                return this.CDRF_NEWFONT | this.CDRF_NOTIFYPOSTPAINT
-        }
-        return this.CDRF_DODEFAULT
-    }
-
-
-    static HeaderCustomDraw(hHeader, wParam, lParam, Msg) {
-        static o := this.NMLVCUSTOMDRAW()
-        code         := NumGet(lParam, o.nmcd.hdr.code,    "Int")
-        hwndFrom     := NumGet(lParam, o.nmcd.hdr.hwndFrom,"Ptr")
-        dwDrawStage  := NumGet(lParam, o.nmcd.dwDrawStage, "UInt")
-        info         := this.uniqueHwnd.Get(hwndFrom, 0)
-
-        if (code != this.NM_CUSTOMDRAW || hwndFrom != hHeader)
-            return
-        if (dwDrawStage == this.CDDS_PREPAINT)
-            return this.CDRF_NOTIFYITEMDRAW
-        if (!info)
-            return this.CDRF_DODEFAULT
-
-        code         := NumGet(lParam, o.nmcd.hdr.code,   "Int")
-        hdc          := NumGet(lParam, o.nmcd.hdc,        "Ptr")
-        dwItemSpec   := NumGet(lParam, o.nmcd.dwItemSpec, "Ptr")
-        uItemState   := NumGet(lParam, o.nmcd.uItemState, "UInt")
-        rcLeft       := NumGet(lParam, o.nmcd.rc.left,    "Int")
-        rcTop        := NumGet(lParam, o.nmcd.rc.top,     "Int")
-        rcRight      := NumGet(lParam, o.nmcd.rc.right,   "Int")
-        rcBottom     := NumGet(lParam, o.nmcd.rc.bottom,  "Int")
-
-        bkColor := info.headerBkColor
-        if (uItemState & this.CDIS_SELECTED)
-            bkColor := info.hoverHeaderSelect != "" ? info.hoverHeaderSelect : this.BrightenColor(bkColor, -20)
-        ; else if (uItemState & this.CDIS_HOT) ; Это так не работает
-        ;     bkColor := info.hoverHeaderHot != "" ? info.hoverHeaderHot : this.BrightenColor(bkColor, 20)
-        else if (dwItemSpec == info.subclass.HoverHeaderItem)
-            bkColor := info.hoverHeaderHot != "" ? info.hoverHeaderHot : this.BrightenColor(bkColor, 20)
-
-        ; Draw BK
-        this.SetBkMode(hdc, 1)
-        this.SetDCBrushColor(hdc, bkColor)
-        this.SelectObject(hdc, bru := this.GetStockObject(18))
-        this.SelectObject(hdc, this.GetStockObject(19))
-        this.FillRect(hdc, lParam + o.nmcd.rc.left, bru)
-
-        ; Draw separator
-        this.SetDCBrushColor(hdc, info.gridColor)
-        lineRect := Buffer(16, 0)
-        NumPut("Int", rcRight -1, "Int", rcTop, "Int", rcRight, "Int", rcBottom, lineRect)
-        this.FillRect(hdc, lineRect, bru)
-
-        ; Draw Text
-        colInfo := this.GetHeaderInfo(hHeader, dwItemSpec)
-        this.SetTextColor(hdc, info.headerTextColor)
-        if (colInfo.align == 0) { ; HDF_LEFT
-            aligRect := Buffer(16, 0)
-            NumPut("Int", rcLeft + 6 , "Int", rcTop, "Int", rcRight, "Int", rcBottom, aligRect) ; выравнивание что бы было красиво
-            this.DrawText(hdc, colInfo.text, -1, aligRect, 0x8024 | colInfo.align) ; DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS
-        } else this.DrawText(hdc, colInfo.text, -1, lParam + o.nmcd.rc.left, 0x8024 | colInfo.align)
-
-        return this.CDRF_SKIPDEFAULT
-    }
-
-
-    static GetHeaderInfo(hHeader, index) {
-        static HDI_TEXT := 2, HDI_FORMAT := 4
-        hditem  := Buffer(A_PtrSize = 8 ? 72 : 48, 0)
-        textBuf := Buffer(512, 0)
-        
-        NumPut("UInt", HDI_TEXT | HDI_FORMAT, hditem, 0)
-        NumPut("Ptr", textBuf.Ptr, hditem, 8)
-        NumPut("Int", 256, hditem, 8 + A_PtrSize * 2) ; cchTextMax
-        
-        SendMessage(0x120B, index, hditem.Ptr, hHeader) ; HDM_GETITEMW
-
-        fmt := NumGet(hditem, 8 + A_PtrSize * 2 + 4, "Int")
-        alignFlag := fmt & 0x03 ; (HDF_LEFT=0, HDF_RIGHT=1, HDF_CENTER=2)
-        dtAlign := (alignFlag == 0) ? 0x0 : (alignFlag == 2) ? 0x1 : 0x2 ; Для DrawText
-        return {text: StrGet(textBuf, "UTF-16"), align: dtAlign}
-    }
-
-
-    static NMLVCUSTOMDRAW() {
-        static p := A_PtrSize
-        return {
-            nmcd: {hdr: {hwndFrom: 0, idFrom: p=8 ? 8 : 4, code: p=8 ? 16 : 8}, ; NMHDR
-                   dwDrawStage: p=8 ? 24 : 12, hdc: p=8 ? 32 : 16,
-                   rc: {left: p=8 ? 40 : 20, top: p=8 ? 44 : 24, right: p=8 ? 48 : 28, bottom: p=8 ? 52 : 32}, ; RECT
-                   dwItemSpec: p=8 ? 56 : 36, uItemState: p=8 ? 64 : 40, lItemlParam: p=8 ? 72 : 44,
-                    },
-            clrText: p=8 ? 80 : 48, clrTextBk: p=8 ? 84 : 52, iSubItem: p=8 ? 88 : 56, dwItemType: p=8 ? 92 : 60,
-            clrFace: p=8 ? 96 : 64, iIconEffect: p=8 ? 100 : 68, iIconPhase: p=8 ? 104 : 72, iPartId: p=8 ? 108 : 76, iStateId: p=8 ? 112 : 80,
-            rcText: {left: p=8 ? 116 : 84, top: p=8 ? 120 : 88, right: p=8 ? 124 : 92, bottom: p=8 ? 128 : 96}, ; RECT
-            uAlign: p=8 ? 132 : 100
-        }
-    }
-
-    static RGB(R, G, B) => ((R << 16) | (G << 8) | B)
-
-    static BrightenColor(clr, perc := 5) => ((p := perc / 100 + 1), this.RGB(Round(Min(255, (clr >> 16 & 0xFF) * p)), Round(Min(255, (clr >> 8 & 0xFF) * p)), Round(Min(255, (clr & 0xFF) * p))))
-
-    static RgbToBgr(rgbColor) => ((rgbColor & 0xFF) << 16) | (((rgbColor >> 8) & 0xFF) << 8) | ((rgbColor >> 16) & 0xFF)
-
-    static GetClientRect(hHeader, rect) => DllCall("GetClientRect", "Ptr", hHeader, "Ptr", rect, "Int")
-
-    static SetWindowTheme(hwnd, pszSubAppName, pszSubIdList := 0) => DllCall("UxTheme\SetWindowTheme", "Ptr", hwnd, "Ptr", StrPtr(pszSubAppName), "Ptr", pszSubIdList, "Int")
-
-    static FillRect(hDC, lprc, hbr) => DllCall("User32\FillRect", "Ptr", hDC, "Ptr", lprc, "Ptr", hbr, "Int")
-
-    static CreateSolidBrush(color) => DllCall("CreateSolidBrush", "UInt", this.RgbToBgr(color), "Ptr")
-
-    static SetBkMode(hdc, iBkMode) => DllCall("Gdi32\SetBkMode", "Ptr", hdc, "Int", iBkMode, "Int")
-
-    static SetDCBrushColor(hdc, crColor) => DllCall("Gdi32\SetDCBrushColor", "Ptr", hdc, "UInt", this.RgbToBgr(crColor), "UInt")
-
-    static SelectObject(hdc, hgdiobj) => DllCall("Gdi32\SelectObject", "Ptr", hdc, "Ptr", hgdiobj, "Ptr")
-
-    static GetStockObject(fnObject) => DllCall("Gdi32\GetStockObject", "Int", fnObject, "Ptr")
-
-    static DeleteObject(hObject) => DllCall("Gdi32\DeleteObject", "Ptr", hObject, "Int")
-
-    static CreatePen(fnPenStyle, nWidth, crColor) => DllCall("Gdi32\CreatePen", "Int", fnPenStyle, "Int", nWidth, "UInt", this.RgbToBgr(crColor), "Ptr")
-
-    static Rectangle(hdc, nLeftRect, nTopRect, nRightRect, nBottomRect) => DllCall("Gdi32\Rectangle", "Ptr", hdc, "Int", nLeftRect, "Int", nTopRect, "Int", nRightRect, "Int", nBottomRect, "Int")
-
-    static SetTextColor(hdc, crColor) => DllCall("Gdi32\SetTextColor", "Ptr", hdc, "UInt", this.RgbToBgr(crColor), "UInt")
-
-    static DrawText(hDC, lpchText, nCount, lpRect, uFormat) => DllCall("User32\DrawText", "Ptr", hDC, "Ptr", StrPtr(lpchText), "Int", nCount, "Ptr", lpRect, "UInt", uFormat, "Int")
-
-    static GetDC(hWnd) => DllCall("GetDC", "Ptr", hWnd, "Ptr")
-
-    static GetWindowDC(hWnd) => DllCall("GetWindowDC", "Ptr", hWnd, "Ptr")
-
-    static ReleaseDC(hWnd, hDC) => DllCall("ReleaseDC", "Ptr", hWnd, "Ptr", hDC)
-
-    static GetWindowLong(hWnd, nIndex) => DllCall(A_PtrSize == 8 ? "GetWindowLongPtr" : "GetWindowLong", "Ptr", hwnd, "Int", nIndex, "Ptr")
-
-    static SetWindowLong(hWnd, nIndex, dwNewLong) => DllCall(A_PtrSize = 8 ? "SetWindowLongPtr" : "SetWindowLong", "Ptr", hWnd, "Int", nIndex, "Ptr", dwNewLong, "Ptr")
-
-    static CallWindowProc(lpPrevWndFunc, hWnd, Msg, wParam, lParam) => DllCall("CallWindowProc", "Ptr", lpPrevWndFunc, "Ptr", hWnd, "UInt", Msg, "Ptr", wParam, "Ptr", lParam)
-
-    static InvalidateRect(hWnd, lpRect, bErase) => DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", lpRect, "Int", bErase)
-
-    static TrackMouseEvent(lpEventTrack) => DllCall("TrackMouseEvent", "Ptr", lpEventTrack)
-
-    static MoveToEx(hdc, x, y, lppt) => DllCall("MoveToEx", "Ptr", hdc, "Int", x, "Int", y, "Ptr", lppt)
-
-    static LineTo(hdc, x, y) => DllCall("LineTo", "Ptr", hdc, "Int", x, "Int", y)
-
-    static GetWindowRect(hWnd, lpRect) => DllCall("GetWindowRect", "Ptr", hWnd, "Ptr", lpRect)
 }
 
 
@@ -1273,12 +75,25 @@ class GuiMcode {
         // D:\GCC_tdm64-gcc-9.2.0\lib\gcc\x86_64-w64-mingw32\10.3.0\libgcc.a
     )"
 
+    static STATIC_SUBSTITUTION := "
+    (
+        // Substitution of symbols: [original] -> [new]
+        // _Znwy -> ??2@YAPEAX_K@Z
+        // _ZdlPv -> ??3@YAXPEAX@Z
+    )"
+
+    static DYNAMIC_SUBSTITUTION := "
+    (
+        // Substitution of symbols: [original] -> [new]
+        // _Znwy -> ??2@YAPEAX_K@Z
+        // _ZdlPv -> ??3@YAXPEAX@Z
+    )"
+
     __New() {
-        DarkMode()
-        this.ctrl := Custom_Ctrl()
+        MCODE.DarkMode()
         this.CreateMainGUI()
         this.CreateSettingsGUI()
-        this.CreateSetPathGUI()
+        ; this.CreateSetPathGUI()
         this.CreateCOFFinfoGUI()
         this.CreateSLPGUI()
         this.CreateLogGUI()
@@ -1328,14 +143,13 @@ class GuiMcode {
         this.showSLP       := this.mainG.AddButton("x326 y5 h22", "Static Library Viewer")
         this.copyMcodeFunc := this.mainG.AddButton("x403 y5 h22", "Copy Mcode Func")
 
-        this.objdumpRE  := this.CreateRichEdit(this.mainG, "Consolas", 11, "0xffffff", "0x101010")
-        this.cppRE      := this.CreateRichEdit(this.mainG, "Consolas", 11, "0xffffff", "0x101010")
-        this.warningRE  := this.CreateRichEdit(this.mainG, "Consolas", 9,  "0x98e6e6", "0x101010")
-        this.infoRE     := this.CreateRichEdit(this.mainG, "Consolas", 9,  "0x551b19", "0x101010")
-        this.hexRE      := this.CreateRichEdit(this.mainG, "Consolas", 9,  "0x11b1a9", "0x101010")
-        this.base64RE   := this.CreateRichEdit(this.mainG, "Consolas", 9,  "0x11b1a9", "0x101010")
-        this.compressRE := this.CreateRichEdit(this.mainG, "Consolas", 9,  "0x11b1a9", "0x101010") ; 0x12abd1
-
+        this.objdumpRE  := this.mainG.AddRichEdit("Consolas", 11, "0xffffff", "0x101010")
+        this.cppRE      := this.mainG.AddRichEdit("Consolas", 11, "0xffffff", "0x101010")
+        this.warningRE  := this.mainG.AddRichEdit("Consolas", 9,  "0x98e6e6", "0x101010")
+        this.infoRE     := this.mainG.AddRichEdit("Consolas", 9,  "0x551b19", "0x101010")
+        this.hexRE      := this.mainG.AddRichEdit("Consolas", 9,  "0x11b1a9", "0x101010")
+        this.base64RE   := this.mainG.AddRichEdit("Consolas", 9,  "0x11b1a9", "0x101010")
+        this.compressRE := this.mainG.AddRichEdit("Consolas", 9,  "0x11b1a9", "0x101010") ; 0x12abd1
         this.menuWarningRE := Menu()
 
         GuiReSizer.Opt(this.mainG.AddText("Background" GuiMcode.decor), "x0 y-170 wp1 h2")
@@ -1373,168 +187,259 @@ class GuiMcode {
         this.setFlagsDDL.Function        := (CtrlObj, GuiObj) => PostMessage(0x0153, -1, 18, CtrlObj)
         this.waitSectionObjdump.Function := (CtrlObj, GuiObj) => PostMessage(0x0153, -1, 16, CtrlObj)
 
-        this.ctrl.ClrBtn(this.setModeDDLBtn,           "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766}, true)
-        this.ctrl.ClrBtn(this.COFFinfo,                "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
-        this.ctrl.ClrBtn(this.showSLP,                 "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
-        this.ctrl.ClrBtn(this.settings,                "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
-        this.ctrl.ClrBtn(this.copyMcodeFunc,           "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
-        this.ctrl.ClrBtn(this.browseSourceFile,        "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.setFlagsDDLBtn,          "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}, true)
-        this.ctrl.ClrBtn(this.addFlagsDDl,             "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.copyTable,               "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.waitSectionObjdumpBtn,   "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}, true)
-        this.ctrl.ClrBtn(this.generateMcodeFromSrc,    "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.copyCode,                "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.generateMcodeFromEditor, "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.parseBytes,              "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.copyHex,                 "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.copyBase64,              "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.copyCompress,            "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}) ; 0x32606b
-        this.ctrl.ClrDDL(this.setFlagsDDL,             "0x141414", "0xa3bed1", "0x1f3a3a")
-        this.ctrl.ClrDDL(this.waitSectionObjdump,      "0x141414", "0xa3bed1", "0x1f3a3a")
-        this.ctrl.ClrDDL(this.setModeDDL,              "0x141414", "0xa3bed1", "0x1f3a3a")
+        MCODE.CustomButton(this.setModeDDLBtn,           "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766}, true)
+        MCODE.CustomButton(this.COFFinfo,                "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
+        MCODE.CustomButton(this.showSLP,                 "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
+        MCODE.CustomButton(this.settings,                "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
+        MCODE.CustomButton(this.copyMcodeFunc,           "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
+        MCODE.CustomButton(this.browseSourceFile,        "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.setFlagsDDLBtn,          "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}, true)
+        MCODE.CustomButton(this.addFlagsDDl,             "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.copyTable,               "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.waitSectionObjdumpBtn,   "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}, true)
+        MCODE.CustomButton(this.generateMcodeFromSrc,    "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.copyCode,                "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.generateMcodeFromEditor, "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.parseBytes,              "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.copyHex,                 "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.copyBase64,              "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.copyCompress,            "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}) ; 0x32606b
 
-        EditBorder(this.flags)
-        EditBorder(this.sourceFile)
-        EditBorder(this.objdumpFlags)
-        EditBorder(this.objdumpRE)
-        EditBorder(this.cppRE)
-        EditBorder(this.warningRE)
-        EditBorder(this.infoRE)
-        EditBorder(this.hexRE)
-        EditBorder(this.base64RE)
-        EditBorder(this.compressRE)
+        MCODE.CustomDDL(this.setFlagsDDL,             "0x141414", "0xa3bed1", "0x1f3a3a")
+        MCODE.CustomDDL(this.waitSectionObjdump,      "0x141414", "0xa3bed1", "0x1f3a3a")
+        MCODE.CustomDDL(this.setModeDDL,              "0x141414", "0xa3bed1", "0x1f3a3a")
 
         IDE(this.cppRE, RTF.CSyntax)
         IDE(this.objdumpRE, RTF.ObjdumpHighlight)
-        RTF.ReplaceSel(GLOBAL_C_CODE, RTF.CSyntax, this.cppRE)
+
+        if (IniRead(GLOBAL_INI_FILE, "SETTINGS", "SAVE_LAST_CODE", 0) && FileExist(GLOBAL_LAST_CODE)) {
+            RTF.ReplaceSel(FileRead(GLOBAL_LAST_CODE), RTF.CSyntax, this.cppRE)
+        } else {
+            RTF.ReplaceSel(GLOBAL_C_CODE, RTF.CSyntax, this.cppRE)
+        }
     }
 
 
     CreateSettingsGUI() {
-        this.settingsG := Gui()
+        SwitchPage(GuiCtrlObj, pageName) {
+            for _, pageControls in Pages {
+                for ctrl in pageControls {
+                    ctrl.Visible := false
+                }
+            }
+            for ctrl in Pages[pageName] {
+                ctrl.Visible := true
+            }
+            for ctrl in [this.general_settings, this.linker_settings, this.compiler_settings, this.change_MCF_paths_settings, this.customize_theme_settings, this.hotkey_settings, this.reference_settings] {
+                MCODE.CustomButton(ctrl, btnColors1*)
+            }
+            MCODE.CustomButton(GuiCtrlObj, "0x216e5f", "0xfeffff")
+            DllCall("user32\SendMessage", "Ptr", this.settingsG.Hwnd, "UInt", 0x0127, "Ptr", 0x0001 | ((0x0001 | 0x0002) << 16), "Ptr", 0)
+        }
+
+        GetCtrl() {
+            ctrls := []
+            static i := 16 ; Количество контролов которые не будет скрыты
+            for hwnd, ctrl in this.settingsG {
+                if (A_Index >= i) {
+                    i++
+                    ctrls.Push(ctrl)
+                }
+            }
+            return ctrls
+        }
+
+        Pages := Map(), Pages.Default := []
+        btnColors1 := ["0x060606", "0x12abd1",, 3, {HOT: "0x1f3a3a"}]
+        btnColors2 := ["0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: "0x2a2766"}]
+        btnColors3 := ["0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: "0x1f3a3a"}]
+        btnColors4 := ["0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"}]
+
+        this.settingsG := Gui("-DPIScale")
         this.settingsG.SetFont("s11", "Consolas")
         this.settingsG.BackColor := 0x060606
         CustomTitleBarWindow(this.settingsG, "005343",,,,true)
+        this.settingsG.AddText("x12 y27 c12abd1 BackgroundTrans", ASCII_MCODE).SetFont("s10")
+        this.settingsG.AddText("x10 y129 w231 h282 Background005343")
+        this.settingsG.AddText("x241 y31 w2 h614   Background005343")
+        this.settingsG.AddText("x10 y617 c12abd1", "MCF version: " GLOBAL_MCF_VERSION)
 
-        this.settingsG.AddText("x10 y43  c0x9AA7B0", "MSVC x64 path:")
-        this.settingsG.AddText("x10 y77  c0x9AA7B0", "MSVC x86 path:")
-        this.settingsG.AddText("x10 y111 c0x9AA7B0", "GCC path:")
-        this.settingsG.AddText("x10 y145 c0x9AA7B0", "Objdump path:")
-        this.settingsG.AddText("x1001 y51 c12abd1", ASCII_MCODE).SetFont("s10")
-
-        this.MSVCPathX64   := this.settingsG.AddEdit("x130 y41  w697 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X64", "\VC\Auxiliary\Build\vcvars64.bat"))
-        this.MSVCPathX86   := this.settingsG.AddEdit("x130 y75  w697 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X86", "\VC\Auxiliary\Build\vcvars32.bat"))
-        this.GCCPath       := this.settingsG.AddEdit("x130 y109 w697 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "GCC_PATH",      "\bin\x86_64-w64-mingw32-gcc-10.3.0.exe [change]"))
-        this.objdumpPath   := this.settingsG.AddEdit("x130 y143 w697 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_PATH",  "\bin\objdump.exe [change]"))
-        this.settingsG.SetFont("s9", "Consolas")
-        this.browseMSVCX64 := this.settingsG.AddButton("x837 y41  w120 h24", "Browse MSVC x64")
-        this.browseMSVCX86 := this.settingsG.AddButton("x837 y75  w120 h24", "Browse MSVC x86")
-        this.browseGCC     := this.settingsG.AddButton("x837 y109 w120 h24", "Browse GCC")
-        this.browseObjdump := this.settingsG.AddButton("x837 y143 w120 h24", "Browse Objdump")
+        this.settingsG.SetFont("s10", "Consolas")
+        this.general_settings          := this.settingsG.AddButton("x12 y131 w229 h38 Left", "  General Settings")
+        this.linker_settings           := this.settingsG.AddButton("x12 y171 w229 h38 Left", "  Linker Settings")
+        this.compiler_settings         := this.settingsG.AddButton("x12 y211 w229 h38 Left", "  Compiler Settings")
+        this.change_MCF_paths_settings := this.settingsG.AddButton("x12 y251 w229 h38 Left", "  Change MCF paths")
+        this.customize_theme_settings  := this.settingsG.AddButton("x12 y291 w229 h38 Left", "  Customize theme")
+        this.hotkey_settings           := this.settingsG.AddButton("x12 y331 w229 h38 Left", "  Hotkey Settings")
+        this.reference_settings        := this.settingsG.AddButton("x12 y371 w229 h38 Left", "  Reference")
         this.settingsG.SetFont("s11", "Consolas")
 
-        this.settingsG.AddText("x100 y191  c0x9AA7B0", "General settings")
-        this.settingsG.AddText("x10  y590  c12abd1",   "MCF version: " GLOBAL_MCF_VERSION)
-        this.settingsG.AddText("x450 y191  c0x9AA7B0", "Compiler settings")
-        this.settingsG.AddText("x921 y191  c0x9AA7B0", "Linker settings")
-        this.settingsG.AddText("x480 y356  c0x9AA7B0", "Static Lib (.a / .lib)")
-        this.settingsG.AddText("x830 y356  c0x9AA7B0", "Dynamic linking symbols")
-        this.settingsG.AddText("x1100 y356 c0x9AA7B0", "Import Dll")
-
-        this.displayObjdump          := this.settingsG.AddButton("x20 y223 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_OBJDUMP",            "✔")), this.settingsG.AddText("x48 y223 c0x12abd1", "Display disassembler")
-        this.objdumpHighlighting     := this.settingsG.AddButton("x20 y255 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_HIGHLIGHTING",       "✔")), this.settingsG.AddText("x48 y255 c0x12abd1", "Disassembler highlighting")
-        this.displayHexMcode         := this.settingsG.AddButton("x20 y287 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_HEX_MCODE",          "✔")), this.settingsG.AddText("x48 y287 c0x12abd1", "Display Hex Mcode")
-        this.displayBase64Mcode      := this.settingsG.AddButton("x20 y319 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_BASE64_MCODE",       "")),  this.settingsG.AddText("x48 y319 c0x12abd1", "Display Base64 Mcode")
-        this.displayCompressMcode    := this.settingsG.AddButton("x20 y351 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_COMPRESS_MCODE",     "")),  this.settingsG.AddText("x48 y351 c0x12abd1", "Display Compress Mcode")
-        this.displayFullOffsetTable  := this.settingsG.AddButton("x20 y383 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_FULL_OFFSET_TABLE",  "✔")), this.settingsG.AddText("x48 y383 c0x12abd1", "Display full offset table")
-        this.showCommentsOffsetTable := this.settingsG.AddButton("x20 y415 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SHOW_COMMENTS_OFFSET_TABLE", "✔")), this.settingsG.AddText("x48 y415 c0x12abd1", "Show comments for the offset table")
-        this.multilineOutputLength   := this.settingsG.AddEdit("x220 y446 w62 h22 Background101010 c11b1a9 Center Number", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MULTILINE_OUTPUT_LENGTH", "176")), this.settingsG.AddText("x20 y447 c0x9AA7B0", "Multiline output length:")
-        this.checkAutoUpdate         := this.settingsG.AddButton("x20 y479 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE",          "")),  this.settingsG.AddText("x48 y479 c0x12abd1", "Check for updates on startup")
-
-        this.cFileMode         := this.settingsG.AddButton("x350 y223 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "C_FILE_MODE",         "")) , this.settingsG.AddText("x378 y223 c0x12abd1", "C file mode")
-        this.cppFileMode       := this.settingsG.AddButton("x350 y255 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "CPP_FILE_MODE",       "✔")), this.settingsG.AddText("x378 y255 c0x12abd1", "Cpp file mode")
-        this.removeDbgSection  := this.settingsG.AddButton("x350 y287 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "REMOVE_DBG_SECTION",  "")),  this.settingsG.AddText("x378 y287 c0x12abd1", "Remove dbg section")
-        this.optimizeSizeMcode := this.settingsG.AddButton("x350 y319 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "OPTIMIZE_SIZE_MCODE", "")),  this.settingsG.AddText("x378 y319 c0x12abd1", "Optimize Mcode size as much as possible")
-
-        this.dynamicLinkingAuto  := this.settingsG.AddButton("x710 y223 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_AUTO", "✔")), this.settingsG.AddText("x738 y223 c0x12abd1", "Link all static symbols dynamically (if possible)")
-        this.removeLastAlignment := this.settingsG.AddButton("x710 y255 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "REMOVE_LAST_ALIGNMENT", "")), this.settingsG.AddText("x738 y255 c0x12abd1", "Remove last alignment [not implemented]")
-        this.entryPoint          := this.settingsG.AddEdit("x845 y287 w66 h22   Background101010 c11b1a9 Center Number", IniRead(GLOBAL_INI_FILE, "SETTINGS", "ENTRY_POINT", 0x0)), this.settingsG.AddText("x710 y287 c0x12abd1", "Entry Point:")
-        this.ignoreSections      := this.settingsG.AddEdit("x845 y319 w405 h24  Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "IGNORE_SECTION", ".xdata|.pdata|.rdata$zzz")), this.settingsG.AddText("x710 y319 c0x12abd1", "Ignore Sections:")
-
-        this.staticLibrariesRE   := this.CreateRichEdit(this.settingsG, "Consolas", 10, "0x11b1a9", "0x101010", "x342  y384 w450 h221 0x00000080")
-        this.dynamicLinkingRE    := this.CreateRichEdit(this.settingsG, "Consolas", 10, "0x11b1a9", "0x101010", "x802  y384 w240 h221 0x00000080")
-        this.importDllsRE        := this.CreateRichEdit(this.settingsG, "Consolas", 10, "0x11b1a9", "0x101010", "x1052 y384 w198 h221 0x00000080")
-
         this.settingsG.SetFont("s9", "Consolas")
-        this.showTempDir    := this.settingsG.AddButton("x10 y5 h22", "Show temp dir")
-        this.showSetPathGUI := this.settingsG.AddButton("x127 y5 h22", "Change paths")
-        this.checkUpdate    := this.settingsG.AddButton("x237 y5 h22", "Check update")
+        this.showTempDir    := this.settingsG.AddButton("x10 y5  h22", "Show temp dir")
+        this.checkUpdate    := this.settingsG.AddButton("x127 y5 h22", "Check update")
 
-        this.settingsG.AddText("x0   y175 w1260 h2   Background005343")
-        this.settingsG.AddText("x330 y175 w2    h600 Background005343")
-        this.settingsG.AddText("x700 y175 w2    h174 Background005343")
-        this.settingsG.AddText("x330 y347 w370  h2   Background005343")
-        this.settingsG.AddText("x967 y31  w2    h144 Background005343")
+        ; =================================== GENERAL SETTINGS ===================================
 
-        this.ctrl.ClrBtn(this.checkUpdate,             "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: "0x2a2766"})
-        this.ctrl.ClrBtn(this.showSetPathGUI,          "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: "0x2a2766"})
-        this.ctrl.ClrBtn(this.showTempDir,             "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: "0x2a2766"})
-        this.ctrl.ClrBtn(this.browseMSVCX64,           "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.browseMSVCX86,           "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.browseGCC,               "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.browseObjdump,           "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.displayObjdump,          "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.objdumpHighlighting,     "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.displayHexMcode,         "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.displayBase64Mcode,      "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.displayCompressMcode,    "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.displayFullOffsetTable,  "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.showCommentsOffsetTable, "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.checkAutoUpdate,         "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.cFileMode,               "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.cppFileMode,             "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.removeDbgSection,        "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.optimizeSizeMcode,       "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.dynamicLinkingAuto,      "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.removeLastAlignment,     "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        EditBorder(this.MSVCPathX64)
-        EditBorder(this.MSVCPathX86)
-        EditBorder(this.GCCPath)
-        EditBorder(this.objdumpPath)
-        EditBorder(this.entryPoint)
-        EditBorder(this.ignoreSections)
-        EditBorder(this.importDllsRE)
-        EditBorder(this.staticLibrariesRE)
-        EditBorder(this.dynamicLinkingRE)
-        EditBorder(this.multilineOutputLength)
+        this.settingsG.SetFont("s11", "Consolas")
+        this.settingsG.AddText("x253 y43  c0x9AA7B0", "MSVC x64 path:")
+        this.settingsG.AddText("x253 y77  c0x9AA7B0", "MSVC x86 path:")
+        this.settingsG.AddText("x253 y111 c0x9AA7B0", "GCC path:")
+        this.settingsG.AddText("x253 y145 c0x9AA7B0", "Clang path:")
+        this.settingsG.AddText("x253 y179 c0x9AA7B0", "Zig path:")
+        this.settingsG.AddText("x253 y213 c0x9AA7B0", "Objdump path:")
 
-        IDE(this.staticLibrariesRE, RTF.Comments)
-        IDE(this.dynamicLinkingRE,  RTF.Comments)
-        IDE(this.importDllsRE,      RTF.Comments)
+        this.MSVCPathX64   := this.settingsG.AddEdit("x373 y41  w747 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X64", "\VC\Auxiliary\Build\vcvars64.bat"))
+        this.MSVCPathX86   := this.settingsG.AddEdit("x373 y75  w747 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X86", "\VC\Auxiliary\Build\vcvars32.bat"))
+        this.GCCPath       := this.settingsG.AddEdit("x373 y109 w747 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "GCC_PATH",      "\bin\x86_64-w64-mingw32-gcc-10.3.0.exe [change]"))
+        this.ClangPath     := this.settingsG.AddEdit("x373 y143 w747 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "CLANG_PATH",    "Clang support is not yet implemented."))
+        this.ZigPath       := this.settingsG.AddEdit("x373 y177 w747 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "ZIG_PATH",      "Zig support is not yet implemented."))
+        this.objdumpPath   := this.settingsG.AddEdit("x373 y211 w747 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_PATH",  "\bin\objdump.exe [change]"))
+        this.settingsG.SetFont("s9", "Consolas")
+        this.browseMSVCX64 := this.settingsG.AddButton("x1130 y41  w120 h24", "Browse MSVC x64")
+        this.browseMSVCX86 := this.settingsG.AddButton("x1130 y75  w120 h24", "Browse MSVC x86")
+        this.browseGCC     := this.settingsG.AddButton("x1130 y109 w120 h24", "Browse GCC")
+        this.browseClang   := this.settingsG.AddButton("x1130 y143 w120 h24", "Browse Clang")
+        this.browseZig     := this.settingsG.AddButton("x1130 y177 w120 h24", "Browse Zig")
+        this.browseObjdump := this.settingsG.AddButton("x1130 y211 w120 h24", "Browse Objdump")
+        this.settingsG.SetFont("s11", "Consolas")
+
+        this.generateObjdump         := this.settingsG.AddButton("x253 y261 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "GENERATE_OBJDUMP",           "✔")), this.settingsG.AddText("x281 y261 c0x12abd1", "Generate disassembler")
+        this.displayObjdump          := this.settingsG.AddButton("x253 y293 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_OBJDUMP",            "✔")), this.settingsG.AddText("x281 y293 c0x12abd1", "Display disassembler")
+        this.objdumpHighlighting     := this.settingsG.AddButton("x253 y325 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_HIGHLIGHTING",       "✔")), this.settingsG.AddText("x281 y325 c0x12abd1", "Disassembler highlighting")
+        this.displayHexMcode         := this.settingsG.AddButton("x253 y357 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_HEX_MCODE",          "✔")), this.settingsG.AddText("x281 y357 c0x12abd1", "Display Hex Mcode")
+        this.displayBase64Mcode      := this.settingsG.AddButton("x253 y389 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_BASE64_MCODE",       "")),  this.settingsG.AddText("x281 y389 c0x12abd1", "Display Base64 Mcode")
+        this.displayCompressMcode    := this.settingsG.AddButton("x253 y421 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_COMPRESS_MCODE",     "")),  this.settingsG.AddText("x281 y421 c0x12abd1", "Display Compress Mcode")
+        this.displayFullOffsetTable  := this.settingsG.AddButton("x253 y453 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_FULL_OFFSET_TABLE",  "✔")), this.settingsG.AddText("x281 y453 c0x12abd1", "Display full offset table")
+        this.showCommentsOffsetTable := this.settingsG.AddButton("x253 y485 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SHOW_COMMENTS_OFFSET_TABLE", "✔")), this.settingsG.AddText("x281 y485 c0x12abd1", "Show comments for the offset table")
+        this.multilineOutputLength   := this.settingsG.AddEdit("x453 y517 w62 h22 Background101010 c11b1a9 Center Number", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MULTILINE_OUTPUT_LENGTH", "176")), this.settingsG.AddText("x253 y518 c0x9AA7B0", "Multiline output length:")
+        this.demangleSymbols         := this.settingsG.AddButton("x253 y549 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SYMBOLS",          "")),  this.settingsG.AddText("x281 y549 c0x12abd1", "Demangle symbol names in the offset table")
+        this.demangleSignatures      := this.settingsG.AddButton("x253 y581 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SIGNATURES",       "")),  this.settingsG.AddText("x281 y581 c0x12abd1", "Demangle function signatures")
+        this.checkAutoUpdate         := this.settingsG.AddButton("x253 y613 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE",          "")),  this.settingsG.AddText("x281 y613 c0x12abd1", "Check for updates on startup")
+        this.saveLastCode            := this.settingsG.AddButton("x631 y261 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SAVE_LAST_CODE", "✔")), this.settingsG.AddText("x659 y261 c0x12abd1", "Save last code")
+
+        this.settingsG.AddText("x241 y249 w1100 h2 Background005343")
+        this.settingsG.AddText("x619 y250 h400 w2  Background005343")
+        Pages["General"] := GetCtrl()
+
+        ; =================================== LINKER SETTINGS ===================================
+
+        this.settingsG.AddText("x681 y31 w2 h121 Background005343")
+        this.settingsG.AddText("x243 y152 w1100 h2 Background005343")
+
+        this.settingsG.AddText("x434 y390  c0x9AA7B0", "Static Lib (.a / .lib)")
+        this.settingsG.AddText("x820 y390  c0x9AA7B0", "Dynamic linking symbols")
+        this.settingsG.AddText("x1100 y390 c0x9AA7B0", "Import Dll")
+        this.settingsG.AddText("x428 y160 c0x9AA7B0", "Static Symbol Substitution")
+        this.settingsG.AddText("x873 y160 c0x9AA7B0", "Dynamic Symbol Substitution")
+
+        this.dynamicLinkingAuto  := this.settingsG.AddButton("x253 y41 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_AUTO", "✔")), this.settingsG.AddText("x281 y41 c0x12abd1", "Link all static symbols dynamically (if possible)")
+        this.removeLastAlignment := this.settingsG.AddButton("x253 y73 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "REMOVE_LAST_ALIGNMENT", "")), this.settingsG.AddText("x281 y73 c0x12abd1", "Remove last alignment [not implemented]")
+        this.entryPoint          := this.settingsG.AddEdit("x356 y105 w80 h22  Background101010 c11b1a9 Center Number", IniRead(GLOBAL_INI_FILE, "SETTINGS", "ENTRY_POINT", 0x0)), this.settingsG.AddText("x253 y106 c0x12abd1 BackgroundTrans", "Entry Point:            (decimal number)")
+        this.ignoreSections      := this.settingsG.AddEdit("x826 y41 w424 h24  Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "IGNORE_SECTION", ".xdata|.pdata|.rdata$zzz")), this.settingsG.AddText("x691 y42 c0x12abd1", "Ignore Sections:")
+
+        this.staticLibrariesRE   := this.settingsG.AddRichEdit("Consolas", 10, "0x11b1a9", "0x101010", "x253  y414 w520 h221 0x00000080")
+        this.dynamicLinkingRE    := this.settingsG.AddRichEdit("Consolas", 10, "0x11b1a9", "0x101010", "x783  y414 w250 h221 0x00000080")
+        this.importDllsRE        := this.settingsG.AddRichEdit("Consolas", 10, "0x11b1a9", "0x101010", "x1043 y414 w207 h221 0x00000080")
+
+        this.staticSubstitution  := this.settingsG.AddRichEdit("Consolas", 10, "0x11b1a9", "0x101010", "x253 y184 w493 h200 0x00000080")
+        this.dynamicSubstitution := this.settingsG.AddRichEdit("Consolas", 10, "0x11b1a9", "0x101010", "x756 y184 w494 h200 0x00000080")
+        Pages["Linker"] := GetCtrl()
+
+
+        ; =================================== COMPILER SETTINGS ===================================
+
+        this.settingsG.AddText("x253 y41 c0xc44444", "Keep in mind that 90% of these settings are simply compiler flags. `nFurthermore, most of these settings will only be relevant for GCC, and possibly Clang; MSVC is supported indirectly.")
+        this.cFileMode         := this.settingsG.AddButton("x253 y90 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "C_FILE_MODE",         "")) , this.settingsG.AddText("x281 y90 c0x12abd1", "C file mode")
+        this.cppFileMode       := this.settingsG.AddButton("x253 y124 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "CPP_FILE_MODE",       "✔")), this.settingsG.AddText("x281 y124 c0x12abd1", "Cpp file mode")
+        this.removeDbgSection  := this.settingsG.AddButton("x253 y158 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "REMOVE_DBG_SECTION",  "")),  this.settingsG.AddText("x281 y158 c0x12abd1", "Remove dbg section (-fno-ident)")
+        this.optimizeSizeMcode := this.settingsG.AddButton("x253 y192 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "OPTIMIZE_SIZE_MCODE", "")),  this.settingsG.AddText("x281 y192 c0x12abd1", "Optimize Mcode size as much as possible (-falign-functions=1 -falign-jumps=1 -falign-loops=1 -falign-labels=1)")
+        this.defineNoDebug     := this.settingsG.AddButton("x253 y226 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "DEFINE_NO_DEBUG", "")),      this.settingsG.AddText("x281 y226 c0x12abd1", "Define no debug (-DNDEBUG)")
+        Pages["Compiler"] := GetCtrl()
+
+        ; =================================== CHANGE_PATHS SETTINGS ===================================
+
+        this.settingsG.AddText("x253 y41 c0xc44444", "IMPORTANT: If you change any setting below, you must close this window and restart the program.")
+        this.setPathTempDir     := this.settingsG.AddEdit("x364 y71   w886 h24 Background101010 c11b1a9", GLOBAL_WORKING_DIR), this.settingsG.AddText("x253 y73  c0x12abd1", "Temp Dir:")
+        this.setPathSettingsIni := this.settingsG.AddEdit("x364 y105  w886 h24 Background101010 c11b1a9", GLOBAL_INI_FILE), this.settingsG.AddText("x253 y107  c0x12abd1", "Settings ini:")
+        this.setPathOutputDir   := this.settingsG.AddEdit("x364 y139  w886 h24 Background101010 c11b1a9", "This is not currently implemented..."), this.settingsG.AddText("x253 y141 c0x12abd1", "Output Dir:") ; GLOBAL_WORKING_OUTPUT_DIR
+        Pages["Change_Paths"] := GetCtrl()
+
+        ; =================================== CUSTOMIZE_THEME SETTINGS ===================================
+
+        this.settingsG.AddText("x253 y41 c0xc44444", "There should have been theme settings here, but I'm too lazy to do that, and why would I need it?")
+        Pages["Customize_Theme"] := GetCtrl()
+
+        ; =================================== HOTKEY SETTINGS ===================================
+
+        this.settingsG.AddText("x253 y41 c0xc44444", "Someday there will be key settings here... But that won't be anytime soon...")
+        Pages["Hotkey"] := GetCtrl()
+
+        ; =================================== REFERENCE SETTINGS ===================================
+        this.settingsG.AddText("x253 y41 c0xc44444", "Perhaps there will be something like documentation or a description of the program here.")
+        Pages["Reference"] := GetCtrl()
+
+
+        MCODE.CustomButton(this.general_settings, btnColors1*)
+        MCODE.CustomButton(this.linker_settings, btnColors1*)
+        MCODE.CustomButton(this.compiler_settings, btnColors1*)
+        MCODE.CustomButton(this.change_MCF_paths_settings, btnColors1*)
+        MCODE.CustomButton(this.customize_theme_settings, btnColors1*)
+        MCODE.CustomButton(this.hotkey_settings, btnColors1*)
+        MCODE.CustomButton(this.reference_settings, btnColors1*)
+
+        MCODE.CustomButton(this.browseMSVCX64, btnColors3*)
+        MCODE.CustomButton(this.browseMSVCX86, btnColors3*)
+        MCODE.CustomButton(this.browseGCC,     btnColors3*)
+        MCODE.CustomButton(this.browseClang,   btnColors3*)
+        MCODE.CustomButton(this.browseZig,     btnColors3*)
+        MCODE.CustomButton(this.browseObjdump, btnColors3*)
+
+        MCODE.CustomButton(this.generateObjdump, btnColors4*)
+        MCODE.CustomButton(this.displayObjdump, btnColors4*)
+        MCODE.CustomButton(this.objdumpHighlighting, btnColors4*)
+        MCODE.CustomButton(this.displayHexMcode, btnColors4*)
+        MCODE.CustomButton(this.displayBase64Mcode, btnColors4*)
+        MCODE.CustomButton(this.displayCompressMcode, btnColors4*)
+        MCODE.CustomButton(this.displayFullOffsetTable, btnColors4*)
+        MCODE.CustomButton(this.showCommentsOffsetTable, btnColors4*)
+        MCODE.CustomButton(this.demangleSymbols, btnColors4*)
+        MCODE.CustomButton(this.demangleSignatures, btnColors4*)
+        MCODE.CustomButton(this.checkAutoUpdate, btnColors4*)
+        MCODE.CustomButton(this.saveLastCode, btnColors4*)
+        MCODE.CustomButton(this.dynamicLinkingAuto, btnColors4*)
+        MCODE.CustomButton(this.removeLastAlignment, btnColors4*)
+        MCODE.CustomButton(this.ignoreSections, btnColors4*)
+        MCODE.CustomButton(this.cFileMode, btnColors4*)
+        MCODE.CustomButton(this.cppFileMode, btnColors4*)
+        MCODE.CustomButton(this.removeDbgSection, btnColors4*)
+        MCODE.CustomButton(this.optimizeSizeMcode, btnColors4*)
+        MCODE.CustomButton(this.defineNoDebug, btnColors4*)
+
+        MCODE.CustomButton(this.showTempDir, btnColors2*)
+        MCODE.CustomButton(this.checkUpdate, btnColors2*)
+
+
+        this.general_settings.OnEvent("Click",          (GuiCtrlObj, Info, Href?) => SwitchPage(GuiCtrlObj, "General"))
+        this.linker_settings.OnEvent("Click",           (GuiCtrlObj, Info, Href?) => SwitchPage(GuiCtrlObj, "Linker"))
+        this.compiler_settings.OnEvent("Click",         (GuiCtrlObj, Info, Href?) => SwitchPage(GuiCtrlObj, "Compiler"))
+        this.change_MCF_paths_settings.OnEvent("Click", (GuiCtrlObj, Info, Href?) => SwitchPage(GuiCtrlObj, "Change_Paths"))
+        this.customize_theme_settings.OnEvent("Click",  (GuiCtrlObj, Info, Href?) => SwitchPage(GuiCtrlObj, "Customize_Theme"))
+        this.hotkey_settings.OnEvent("Click",           (GuiCtrlObj, Info, Href?) => SwitchPage(GuiCtrlObj, "Hotkey"))
+        this.reference_settings.OnEvent("Click",        (GuiCtrlObj, Info, Href?) => SwitchPage(GuiCtrlObj, "Reference"))
+
+        IDE(this.staticLibrariesRE,   RTF.Comments)
+        IDE(this.dynamicLinkingRE,    RTF.Comments)
+        IDE(this.importDllsRE,        RTF.Comments)
+        IDE(this.staticSubstitution,  RTF.Comments)
+        IDE(this.dynamicSubstitution, RTF.Comments)
 
         RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "STATIC_LIBRARIES", GuiMcode.STATIC_LIBRARIES), "|"), "`n"), RTF.Comments, this.staticLibrariesRE)
         RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_SELECTIVELY", GuiMcode.DYNAMIC_LINKING), "|"), "`n"), RTF.Comments, this.dynamicLinkingRE)
         RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS", GuiMcode.IMPORT_DLL), "|"), "`n"), RTF.Comments, this.importDllsRE)
-    }
-
-
-    CreateSetPathGUI() {
-        this.pathG := Gui()
-        this.pathG.BackColor := 0x060606
-        CustomTitleBarWindow(this.pathG, "005343",,,,true)
-        this.pathG.SetFont("s11", "Consolas")
-
-        this.pathG.AddText("x10 y43  c0x12abd1", "Temp Dir:")
-        this.pathG.AddText("x10 y77  c0x12abd1", "Settings ini:")
-        this.pathG.AddText("x10 y111 c0x12abd1", "Output Dir:")
-        this.setPathTempDir     := this.pathG.AddEdit("x121 y41  w720 h24 Background101010 c11b1a9", GLOBAL_WORKING_DIR)
-        this.setPathSettingsIni := this.pathG.AddEdit("x121 y75  w720 h24 Background101010 c11b1a9", GLOBAL_INI_FILE)
-        this.setPathOutputDir   := this.pathG.AddEdit("x121 y109 w720 h24 Background101010 c11b1a9", "This is not currently implemented...") ; GLOBAL_WORKING_OUTPUT_DIR
-        this.pathG.AddText("x10 y145 c0xc44444", "IMPORTANT: If you change the paths, you need to close this window and restart the application for it to work correctly.").SetFont("s9")
-        EditBorder(this.setPathTempDir)
-        EditBorder(this.setPathSettingsIni)
-        EditBorder(this.setPathOutputDir)
+        RTF.ReplaceSel(FormatIniData(IniRead(GLOBAL_INI_FILE, "SETTINGS", "STATIC_SUBSTITUTION", GuiMcode.STATIC_SUBSTITUTION), true), RTF.Comments, this.staticSubstitution)
+        RTF.ReplaceSel(FormatIniData(IniRead(GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_SUBSTITUTION", GuiMcode.DYNAMIC_SUBSTITUTION), true), RTF.Comments, this.dynamicSubstitution)
+        
+        SwitchPage(this.general_settings, "General")
     }
 
 
@@ -1563,13 +468,10 @@ class GuiMcode {
         GuiReSizer.Opt(this.waitSectionHexDump,    "x10 y41 wp0.5 w50")
         this.waitSectionHexDump.Function := (CtrlObj, GuiObj) => PostMessage(0x0153, -1, 19, CtrlObj)
 
-        this.ctrl.ClrBtn(this.displayAllCOFFInfo,        "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
-        this.ctrl.ClrBtn(this.copyMcodeHex,              "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.waitSectionHexDumpBtn,     "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}, true)
-        this.ctrl.ClrDDL(this.waitSectionHexDump,        "0x141414", "0xa3bed1", "0x1f3a3a")
-        EditBorder(this.copyMcodeRE)
-        EditBorder(this.hexDumpRE)
-        EditBorder(this.COFFinfoRE)
+        MCODE.CustomButton(this.displayAllCOFFInfo,        "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
+        MCODE.CustomButton(this.copyMcodeHex,              "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.waitSectionHexDumpBtn,     "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}, true)
+        MCODE.CustomDDL(this.waitSectionHexDump,        "0x141414", "0xa3bed1", "0x1f3a3a")
 
         IDE(this.hexDumpRE, RTF.HexDump)
         IDE(this.COFFinfoRE, RTF.CoffSyntax)
@@ -1608,12 +510,9 @@ class GuiMcode {
         GuiReSizer.Opt(this.statusSL, "x10 y-28 wp1")
         this.slpG.SetFont("s11")
 
-        this.ctrl.ClrBtn(this.btnLoadSL,   "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.btnSaveSL, "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.btnLoadSL,   "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.btnSaveSL, "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
         this.lvAR.SetTheme("0x101010", "0xa3bed1", {SELECTED: "", HOT: "0x1f3a3a"}, "0x101010", "0x00ccff", "0x005343", {SELECTED: "0x1c2f31", HOT: "0x066e6e"}) ; 0x077ed3
-
-        EditBorder(this.loadSL)
-        EditBorder(this.saveSL)
     }
 
 
@@ -1668,21 +567,17 @@ class GuiMcode {
 
         this.menu_search_symbols := Menu()
 
-        this.ctrl.ClrBtn(this.btn_select_file,    "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.btn_select_dir,     "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.btn_clear_paths,    "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        this.ctrl.ClrBtn(this.btn_search_symbols, "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.btn_select_file,    "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.btn_select_dir,     "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.btn_clear_paths,    "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCODE.CustomButton(this.btn_search_symbols, "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
 
-        this.ctrl.ClrBtn(this.btnBox_find_all,         "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.btnBox_recursive_search, "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.btnBox_search_static,    "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        this.ctrl.ClrBtn(this.btnBox_search_dynamic,   "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
+        MCODE.CustomButton(this.btnBox_find_all,         "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
+        MCODE.CustomButton(this.btnBox_recursive_search, "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
+        MCODE.CustomButton(this.btnBox_search_static,    "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
+        MCODE.CustomButton(this.btnBox_search_dynamic,   "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
 
         this.lv_viewing_symbols.SetTheme("0x101010", "0xa3bed1", {SELECTED: "", HOT: "0x1f3a3a"}, "0x101010", "0x00ccff", "0x005343", {SELECTED: "0x1c2f31", HOT: "0x066e6e"})
-
-        EditBorder(this.edit_symbols_RE)
-        EditBorder(this.edit_dir_file_RE)
-        EditBorder(this.edit_output_paths_RE)
 
         RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS",     GuiMcode.SEARCH_SYMBOLS), "|"), "`n"), RTF.Comments, this.edit_symbols_RE)
         RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS_DIR", GuiMcode.SEARCH_SYMBOLS_DIR), "|"), "`n"), RTF.Comments, this.edit_dir_file_RE)
@@ -1749,10 +644,16 @@ class GuiMcode {
             IniWrite(this.objdumpFlags.Text,   GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_FLAGS")
             IniWrite(this.sourceFile.Text,     GLOBAL_INI_FILE, "SETTINGS", "SOURCE_FILE")
             IniWrite(this.flags.Text,          GLOBAL_INI_FILE, "SETTINGS", "FLAGS")
+
+            if (this.saveLastCode.Text) {
+                try FileDelete(GLOBAL_LAST_CODE)
+                FileAppend(this.cppRE.Text, GLOBAL_LAST_CODE)
+            }
+
             ExitApp()
         })
 
-        this.settings.OnEvent("Click",      (*) => this.settingsG.Show("w1260 h584"))
+        this.settings.OnEvent("Click",      (*) => this.settingsG.Show("w1260 h614"))
         this.copyMcodeFunc.OnEvent("Click", (*) => A_Clipboard := GLOBAL_MCODE_FUNC_FINAL)
         this.showSLP.OnEvent("Click",       (*) => this.slpG.Show("w1000 h450"))
         this.COFFinfo.OnEvent("Click",      (*) => this.COFFG.Show("w1200 h640"))
@@ -1855,9 +756,12 @@ class GuiMcode {
         this.settingsG.OnEvent("Close", (*) {
             IniWrite(this.MSVCPathX64.Text, GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X64")
             IniWrite(this.MSVCPathX86.Text, GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X86")
+            IniWrite(this.ClangPath.Text,   GLOBAL_INI_FILE, "SETTINGS", "CLANG_PATH")
+            IniWrite(this.ZigPath.Text,     GLOBAL_INI_FILE, "SETTINGS", "ZIG_PATH")
             IniWrite(this.GCCPath.Text,     GLOBAL_INI_FILE, "SETTINGS", "GCC_PATH")
             IniWrite(this.objdumpPath.Text, GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_PATH")
 
+            IniWrite(this.generateObjdump.Text         != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "GENERATE_OBJDUMP")
             IniWrite(this.displayObjdump.Text          != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_OBJDUMP")
             IniWrite(this.objdumpHighlighting.Text     != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_HIGHLIGHTING")
             IniWrite(this.displayHexMcode.Text         != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_HEX_MCODE")
@@ -1868,11 +772,14 @@ class GuiMcode {
             IniWrite(this.checkAutoUpdate.Text         != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE")
             IniWrite(this.multilineOutputLength.Text, GLOBAL_INI_FILE, "SETTINGS", "MULTILINE_OUTPUT_LENGTH")
 
-            IniWrite(this.cFileMode.Text         != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "C_FILE_MODE")
-            IniWrite(this.cppFileMode.Text       != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "CPP_FILE_MODE")
-            IniWrite(this.removeDbgSection.Text  != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "REMOVE_DBG_SECTION")
-            IniWrite(this.optimizeSizeMcode.Text != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "OPTIMIZE_SIZE_MCODE")
-
+            IniWrite(this.cFileMode.Text           != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "C_FILE_MODE")
+            IniWrite(this.cppFileMode.Text         != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "CPP_FILE_MODE")
+            IniWrite(this.removeDbgSection.Text    != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "REMOVE_DBG_SECTION")
+            IniWrite(this.optimizeSizeMcode.Text   != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "OPTIMIZE_SIZE_MCODE")
+            IniWrite(this.defineNoDebug.Text       != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DEFINE_NO_DEBUG")
+            IniWrite(this.demangleSymbols.Text     != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SYMBOLS")
+            IniWrite(this.demangleSignatures.Text  != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SIGNATURES")
+            IniWrite(this.saveLastCode.Text        != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "SAVE_LAST_CODE")
             IniWrite(this.dynamicLinkingAuto.Text  != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_AUTO")
             IniWrite(this.removeLastAlignment.Text != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "REMOVE_LAST_ALIGNMENT")
             IniWrite(this.entryPoint.Text    , GLOBAL_INI_FILE, "SETTINGS", "ENTRY_POINT")
@@ -1880,17 +787,25 @@ class GuiMcode {
             IniWrite(Join(StrSplit(RegExReplace(this.importDllsRE.Text, "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS")
             IniWrite(Join(StrSplit(RegExReplace(this.dynamicLinkingRE.Text, "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_SELECTIVELY")
             IniWrite(Join(StrSplit(RegExReplace(this.staticLibrariesRE.Text, "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "STATIC_LIBRARIES")
+            IniWrite(FormatIniData(this.staticSubstitution.Text), GLOBAL_INI_FILE, "SETTINGS", "STATIC_SUBSTITUTION")
+            IniWrite(FormatIniData(this.dynamicSubstitution.Text), GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_SUBSTITUTION")
+
+            RegWrite(this.setPathTempDir.Text,     "REG_SZ", "HKCU\Software\MCF", "TEMP_DIR")
+            RegWrite(this.setPathSettingsIni.Text, "REG_SZ", "HKCU\Software\MCF", "TEMP_SETTINGS_INI")
+            RegWrite(this.setPathOutputDir.Text,   "REG_SZ", "HKCU\Software\MCF", "TEMP_OUTPUT")
         })
 
         this.showTempDir.OnEvent("Click",    (*) => Run(GLOBAL_WORKING_DIR))
-        this.showSetPathGUI.OnEvent("Click", (*) => this.pathG.Show("w851 h146"))
         this.checkUpdate.OnEvent("Click",    (*) => new_thread_check_update.AsyncCall("CheckForUpdates", "Vedette1", "MCF.ahk", GLOBAL_MCF_VERSION, true))
 
         this.browseMSVCX64.OnEvent("Click", (*) => this.MSVCPathX64.Text    := (sel := FileSelect(,,, "Bat File (*.bat)")) ? sel : this.MSVCPathX64.Text)
         this.browseMSVCX86.OnEvent("Click", (*) => this.MSVCPathX86.Text    := (sel := FileSelect(,,, "Bat File (*.bat)")) ? sel : this.MSVCPathX86.Text)
         this.browseGCC.OnEvent("Click",     (*) => this.GCCPath.Text        := (sel := FileSelect(,,, "Exe File (*.exe)")) ? sel : this.GCCPath.Text)
+        this.browseClang.OnEvent("Click",   (*) => this.ClangPath.Text      := (sel := FileSelect(,,, "Exe File (*.exe)")) ? sel : this.ClangPath.Text)
+        this.browseZig.OnEvent("Click",     (*) => this.ZigPath.Text        := (sel := FileSelect(,,, "Exe File (*.exe)")) ? sel : this.ZigPath.Text)
         this.browseObjdump.OnEvent("Click", (*) => this.objdumpPath.Text    := (sel := FileSelect(,,, "Exe File (*.exe)")) ? sel : this.objdumpPath.Text)
 
+        this.generateObjdump.OnEvent("Click",         (*) => this.generateObjdump.Text         := this.generateObjdump.Text         ? "" : "✔")
         this.displayObjdump.OnEvent("Click",          (*) => this.displayObjdump.Text          := this.displayObjdump.Text          ? "" : "✔")
         this.objdumpHighlighting.OnEvent("Click",     (*) => this.objdumpHighlighting.Text     := this.objdumpHighlighting.Text     ? "" : "✔")
         this.displayHexMcode.OnEvent("Click",         (*) => this.displayHexMcode.Text         := this.displayHexMcode.Text         ? "" : "✔")
@@ -1898,21 +813,17 @@ class GuiMcode {
         this.displayCompressMcode.OnEvent("Click",    (*) => this.displayCompressMcode.Text    := this.displayCompressMcode.Text    ? "" : "✔")
         this.displayFullOffsetTable.OnEvent("Click",  (*) => this.displayFullOffsetTable.Text  := this.displayFullOffsetTable.Text  ? "" : "✔")
         this.showCommentsOffsetTable.OnEvent("Click", (*) => this.showCommentsOffsetTable.Text := this.showCommentsOffsetTable.Text ? "" : "✔")
-        this.checkAutoUpdate.OnEvent("Click",         (*) => this.checkAutoUpdate.Text := this.checkAutoUpdate.Text ? "" : "✔")
-        this.cFileMode.OnEvent("Click",               (*) => (this.cFileMode.Text   := "✔", this.cppFileMode.Text := ""))
-        this.cppFileMode.OnEvent("Click",             (*) => (this.cppFileMode.Text := "✔", this.cFileMode.Text := ""))
-        this.removeDbgSection.OnEvent("Click",        (*) => this.removeDbgSection.Text    := this.removeDbgSection.Text    ? "" : "✔")
-        this.optimizeSizeMcode.OnEvent("Click",       (*) => this.optimizeSizeMcode.Text   := this.optimizeSizeMcode.Text   ? "" : "✔")
-        this.dynamicLinkingAuto.OnEvent("Click",      (*) => this.dynamicLinkingAuto.Text  := this.dynamicLinkingAuto.Text ? "" : "✔")
-        this.removeLastAlignment.OnEvent("Click",     (*) => this.removeLastAlignment.Text := this.removeLastAlignment.Text ? "" : "✔")
-
-        ;####################################################### Path ###########################################################
-
-        this.pathG.OnEvent("Close", (*) {
-            RegWrite(this.setPathTempDir.Text,     "REG_SZ", "HKCU\Software\MCF", "TEMP_DIR")
-            RegWrite(this.setPathSettingsIni.Text, "REG_SZ", "HKCU\Software\MCF", "TEMP_SETTINGS_INI")
-            RegWrite(this.setPathOutputDir.Text,   "REG_SZ", "HKCU\Software\MCF", "TEMP_OUTPUT")
-        })
+        this.demangleSymbols.OnEvent("Click",         (*) => this.demangleSymbols.Text         := this.demangleSymbols.Text         ? "" : "✔")
+        this.demangleSignatures.OnEvent("Click",      (*) => this.demangleSignatures.Text      := this.demangleSignatures.Text      ? "" : "✔")
+        this.saveLastCode.OnEvent("Click",            (*) => this.saveLastCode.Text            := this.saveLastCode.Text            ? "" : "✔")
+        this.checkAutoUpdate.OnEvent("Click",         (*) => this.checkAutoUpdate.Text         := this.checkAutoUpdate.Text         ? "" : "✔")
+        this.cFileMode.OnEvent("Click",               (*) => (this.cFileMode.Text              := "✔", this.cppFileMode.Text       := ""))
+        this.cppFileMode.OnEvent("Click",             (*) => (this.cppFileMode.Text            := "✔", this.cFileMode.Text         := ""))
+        this.removeDbgSection.OnEvent("Click",        (*) => this.removeDbgSection.Text        := this.removeDbgSection.Text        ? "" : "✔")
+        this.optimizeSizeMcode.OnEvent("Click",       (*) => this.optimizeSizeMcode.Text       := this.optimizeSizeMcode.Text       ? "" : "✔")
+        this.defineNoDebug.OnEvent("Click",           (*) => this.defineNoDebug.Text           := this.defineNoDebug.Text           ? "" : "✔")
+        this.dynamicLinkingAuto.OnEvent("Click",      (*) => this.dynamicLinkingAuto.Text      := this.dynamicLinkingAuto.Text      ? "" : "✔")
+        this.removeLastAlignment.OnEvent("Click",     (*) => this.removeLastAlignment.Text     := this.removeLastAlignment.Text     ? "" : "✔")
 
         ;####################################################### COFF info ######################################################
 
@@ -2098,47 +1009,58 @@ class GuiMcode {
 
         this.menu_search_symbols.Add("Copy the archive path", (*) => A_Clipboard := this.lv_viewing_symbols.GetText(this.lv_viewing_symbols.GetNext(0, "F"), 2))
         this.menu_search_symbols.Add("Copy the symbol name",  (*) => A_Clipboard := this.lv_viewing_symbols.GetText(this.lv_viewing_symbols.GetNext(0, "F"), 1))
+        this.menu_search_symbols.Add("Copy object file name", (*) => A_Clipboard := this.lv_viewing_symbols.GetText(this.lv_viewing_symbols.GetNext(0, "F"), 3))
         this.menu_search_symbols.Add()
         this.menu_search_symbols.Add("Open the file folder",  (*) => OpenFileLocation())
     }
 
 
     GenerateMcode(src) {
-        this.objdump         := unset
-        prop                 := []
-        this.SetTextColorRE(0x11b1a9, this.hexRE)
-        this.SetTextColorRE(0x11b1a9, this.base64RE)
-        this.SetTextColorRE(0x11b1a9, this.compressRE)
-        this.infoRE.Text     := ""
-        this.warningRE.Text  := ""
-        this.objdumpRE.Text  := ""
-        this.hexRE.Text      := ""
-        this.base64RE.Text   := ""
-        this.compressRE.Text := ""
-        this.waitSectionObjdump.Delete()
-        this.waitSectionObjdump.Add(["No sections"])
-        this.waitSectionObjdumpBtn.Text := "No sections"
-        RTF.ReplaceSel("Please wait, Mcode assembly may take several tens of seconds...`n", RTF.Log, this.warningRE,,, true)
-        totalTime             := QPC()
-        srcIsCOFF             := (src ~= "\.(o|obj)$" && FileExist(src)) ? 1 : 0
-        set                   := Compiler.Settings()
-        set.src               := src
-        set.srcFileMode       := this.cFileMode.Text != "" ? "c" : "cpp"
-        set.flagsObjdump      := this.objdumpFlags.Text
-        set.flagsObj          := this.flags.Text
-        set.optimizeSizeMcode := this.optimizeSizeMcode.Text != "" ? true : false
-        set.removeDbgSection  := this.removeDbgSection.Text  != "" ? true : false
-        set.GCCPath           := this.GCCPath.Text
-        set.MSVCPath          := this.setModeDDL.Text == "MSVC x64" ? this.MSVCPathX64.Text : this.setModeDDL.Text == "MSVC x86" ? this.MSVCPathX86.Text : "unknown path (MSVC)"
-        set.Use               := this.setModeDDL.Text == "GCC" ? "GCC" : "MSVC"
-        set.disassemblerPath  := this.objdumpPath.Text
-        compil                := Compiler(set)
-        importDll             := GUIDataToArray(this.importDllsRE.Text)
-        dynamicLinking        := this.dynamicLinkingAuto.Text != "" ? true : (_ := GUIDataToArray(this.dynamicLinkingRE.Text), _.Length ? _ : false)
-        staticLinking         := GUIDataToArray(this.staticLibrariesRE.Text)
-        ignoreSec             := StrSplit(RTrim(this.ignoreSections.Text, "`n`r"), "|")
-        fullOffsetTable       := this.displayFullOffsetTable.Text != "" ? true : false
-        try ePoint            := Integer(this.entryPoint.Text)
+        try {
+            this.objdump         := unset
+            prop                 := []
+            this.SetTextColorRE(0x11b1a9, this.hexRE)
+            this.SetTextColorRE(0x11b1a9, this.base64RE)
+            this.SetTextColorRE(0x11b1a9, this.compressRE)
+            this.infoRE.Text     := ""
+            this.warningRE.Text  := ""
+            this.objdumpRE.Text  := ""
+            this.hexRE.Text      := ""
+            this.base64RE.Text   := ""
+            this.compressRE.Text := ""
+            this.waitSectionObjdump.Delete()
+            this.waitSectionObjdump.Add(["No sections"])
+            this.waitSectionObjdumpBtn.Text := "No sections"
+            RTF.ReplaceSel("Please wait, Mcode assembly may take several tens of seconds...`n", RTF.Log, this.warningRE,,, true)
+            totalTime             := QPC()
+            srcIsCOFF             := (src ~= "\.(o|obj)$" && FileExist(src)) ? 1 : 0
+            set                   := Compiler.Settings()
+            set.src               := src
+            set.srcFileMode       := this.cFileMode.Text != "" ? "c" : "cpp"
+            set.flagsObjdump      := this.objdumpFlags.Text
+            set.flagsObj          := this.flags.Text
+            set.optimizeSizeMcode := this.optimizeSizeMcode.Text != "" ? true : false
+            set.removeDbgSection  := this.removeDbgSection.Text  != "" ? true : false
+            set.defineNoDebug     := this.defineNoDebug.Text     != "" ? true : false
+            set.GCCPath           := this.GCCPath.Text
+            set.MSVCPath          := this.setModeDDL.Text == "MSVC x64" ? this.MSVCPathX64.Text : this.setModeDDL.Text == "MSVC x86" ? this.MSVCPathX86.Text : "unknown path (MSVC)"
+            set.Use               := this.setModeDDL.Text == "GCC" ? "GCC" : "MSVC"
+            set.disassemblerPath  := this.objdumpPath.Text
+            compil                := Compiler(set)
+
+            importDll             := GUIDataToArray(this.importDllsRE.Text)
+            dynamicLinking        := this.dynamicLinkingAuto.Text != "" ? true : (_ := GUIDataToArray(this.dynamicLinkingRE.Text), _.Length ? _ : false)
+            staticLinking         := GUIDataToArray(this.staticLibrariesRE.Text)
+            ignoreSec             := StrSplit(RTrim(this.ignoreSections.Text, "`n`r"), "|")
+            fullOffsetTable       := this.displayFullOffsetTable.Text != "" ? true : false
+            try ePoint            := Integer(this.entryPoint.Text)
+            staticSubstitution    := ParseEditToMap(this.staticSubstitution.Text)
+            dynamicSubstitution   := ParseEditToMap(this.dynamicSubstitution.Text)
+            demangleLvl           := (this.demangleSymbols.Text ? 1 : 0) + (this.demangleSignatures ? 2 : 0)
+        } catch as er {
+            MsgBox("This error should not happen... If you see it, please report it.`n" er.Message "`n" er.Line " -> " er.File "`n" er.Stack "`n" er.What, "ERROR")
+            return
+        }
 
         ; Если src это COFF (.o|.obj), то линковщик соберет Mcode без зависимостей от компилятора. COFF копируеться - задел на будущее...
         if (srcIsCOFF) {
@@ -2177,10 +1099,13 @@ class GuiMcode {
         ; Objdump не обязателен для работы кода. Это просто дополнение (дизассемблер) для удобства понимания того, как именно компилятор собирает код.
         ; В дальнейшем нужно доделать DumpBin (MSVC), а возможно лучше будет написать свой собственный дизассемблер на AHK, но это мутороное занятие...
         Objdump(path) {
-            if (this.displayObjdump.Text) {
+            if (this.generateObjdump.Text) {
                 objdumpTime := QPC()
-                er := compil.ObjdumpGCC(path)
-                if (er is Error) {
+                dump := compil.ObjdumpGCC(path)
+            }
+
+            if (this.generateObjdump.Text && this.displayObjdump.Text) {
+                if (dump is Error) {
                     RTF.ReplaceSel("Invalid Objdump path: " this.objdumpPath.Text "`n`nSpecify the absolute path to Objdump [\bin\objdump.exe], or do not specify a path at all (leave the input field empty); in which case the path from the environment variables will be used (PATH).`n`n" er.Message, RTF.ErrorLog, this.objdumpRE)
                         this.waitSectionObjdump.Delete()
                         this.waitSectionObjdump.Add(["See the error below..."])
@@ -2218,7 +1143,7 @@ class GuiMcode {
                     }
                 } else newStaticLinking := staticLinking
 
-                this.cf := COFF(path, importDll, ignoreSec, fullOffsetTable, ePoint ?? 0, dynamicLinking, newStaticLinking)
+                this.cf := COFF(path, importDll, ignoreSec, fullOffsetTable, ePoint ?? 0, dynamicLinking, newStaticLinking, dynamicSubstitution, staticSubstitution, demangleLvl)
                 this.mcode := this.cf.Linker()
 
                 ; Визуальная подсветка самой короткой строки MCode.
@@ -2262,7 +1187,9 @@ class GuiMcode {
                     ; RTF.ReplaceSel(this.mcode.dbg.ALL, RTF.VsCodeAhk, this.logLinkerRE)
                 }
             } catch as er {
-                this.Error_log("ERORR Linker:`n" er.Message "`n" er.Line " " er.File)
+                this.Error_log("ERORR Linker:`n" er.Message "`n" er.Line " " er.File "`nFor more information about the error, see the log.")
+                try FileDelete(GLOBAL_MCF_LINKER_LOG)
+                FileAppend(this.cf.dbgLogInfo, GLOBAL_MCF_LINKER_LOG, "")
             }
         }
     }

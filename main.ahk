@@ -3,13 +3,10 @@
 
 #DllLoad "msftedit.dll"
 #Include const.ahk
-#Include сompilerWrapper.ahk
-#Include IDE.ahk
 #Include MCF_GUI.ahk
 #Include threads\CheckForUpdates.ahk
-
-
 try global new_thread_check_update := Worker(new_script_thread_check_update,, "MCF check update") ; новый поток для проверки ласт версии (релиза) MCF.
+
 
 class main {
     __New() {
