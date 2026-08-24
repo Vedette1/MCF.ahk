@@ -13,6 +13,7 @@ class Compiler {
 
         optimizeSizeMcode := false
         removeDbgSection  := false
+        defineNoDebug     := false
 
         Use               := "GCC"
         GCCPath           := ""
@@ -47,6 +48,12 @@ class Compiler {
                 this.o.flagsObj .= " -falign-functions=1 -falign-jumps=1 -falign-loops=1 -falign-labels=1"
             } else if (this.o.Use == "MSVC") {
                 this.o.flagsObj .= " /Os" ; Аналогично... Я не нашел нужные флаги... Потом поискать...
+            }
+        }
+
+        if (this.o.defineNoDebug) {
+            if (this.o.Use == "GCC") {
+                this.o.flagsObj .= " -DNDEBUG"
             }
         }
 
