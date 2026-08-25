@@ -1,10 +1,65 @@
-﻿global GLOBAL_WORKING_DIR        := A_Temp "\MCODE"
-global GLOBAL_WORKING_OUTPUT_DIR := GLOBAL_WORKING_DIR "\Output"
-global GLOBAL_INI_FILE           := GLOBAL_WORKING_DIR "\settings.ini"
-global GLOBAL_MCF_LINKER_LOG     := GLOBAL_WORKING_DIR "\MCF_Linker_log.log"
-global GLOBAL_LAST_CODE          := GLOBAL_WORKING_DIR "\LastCode.cpp"
-global GLOBAL_MCF_VERSION        := "1.0.5"
-global GLOBAL_AHK_VERSION        := "AutoHotkey_H 2.1-alpha.18"
+﻿class Const {
+    static __GLOBAL_WORKING_DIR       := ""
+    static __GLOBAL_INI_FILE          := ""
+    static __GLOBAL_WORKING_CACHE_DIR := ""
+
+    static __New() {
+        this.GLOBAL_WORKING_DIR       := RegRead("HKCU\Software\MCF", "TEMP_DIR",          A_Temp "\MCODE")
+        this.GLOBAL_INI_FILE          := RegRead("HKCU\Software\MCF", "TEMP_SETTINGS_INI", this.GLOBAL_WORKING_DIR "\settings.ini")
+        this.GLOBAL_WORKING_CACHE_DIR := RegRead("HKCU\Software\MCF", "TEMP_CACHE",        this.GLOBAL_WORKING_DIR "\Cache")
+    }
+
+    static GLOBAL_WORKING_DIR {
+        get => this.__GLOBAL_WORKING_DIR
+        set {
+            if !(DirExist(Value)) {
+                DirCreate(Value)
+            }
+            this.__GLOBAL_WORKING_DIR     := Value
+            this.GLOBAL_INI_FILE          := Value "\settings.ini"
+            this.GLOBAL_WORKING_CACHE_DIR := Value "\Cache"
+        }
+    }
+
+    static GLOBAL_INI_FILE {
+        get => this.__GLOBAL_INI_FILE
+        set {
+            SplitPath(Value, &fileName, &dir, &ext)
+            if (!DirExist(dir)) {
+                DirCreate(dir)
+            }
+            if (ext !== "ini") {
+                Value := dir "\settings.ini"
+            }
+            if !FileExist(Value) {
+                FileAppend("", Value, "UTF-16")
+            }
+
+            this.__GLOBAL_INI_FILE := Value
+        }
+    }
+
+    static GLOBAL_WORKING_CACHE_DIR {
+        get => this.__GLOBAL_WORKING_CACHE_DIR
+        set {
+            if !(DirExist(Value)) {
+                DirCreate(Value)
+            }
+            this.__GLOBAL_WORKING_CACHE_DIR := Value
+        }
+    }
+
+    static GLOBAL_MCF_LINKER_LOG     => this.GLOBAL_WORKING_DIR "\MCF_Linker_log.log"
+    static GLOBAL_LAST_CODE          => this.GLOBAL_WORKING_DIR "\LastCode.cpp"
+    static GLOBAL_MCF_VERSION        => "1.0.5"
+    static GLOBAL_AHK_VERSION        => "AutoHotkey_H 2.1-alpha.18"
+
+    static GLOBAL_TEMP_CPP           => this.GLOBAL_WORKING_DIR "\temp.cpp"
+    static GLOBAL_TEMP_C             => this.GLOBAL_WORKING_DIR "\temp.c"
+    static GLOBAL_TEMP_ASM           => this.GLOBAL_WORKING_DIR "\temp.asm"
+    static GLOBAL_TEMP_OBJ           => this.GLOBAL_WORKING_DIR "\temp.o"
+    static GLOBAL_TEMP_COMPILER_LOG  => this.GLOBAL_WORKING_DIR "\Compiler_Error.log"
+}
 
 
 global GLOBAL_MCODE_FUNC_FINAL := "

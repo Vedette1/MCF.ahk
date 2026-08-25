@@ -111,9 +111,9 @@ class GuiMcode {
 
         this.mainG.AddText("x10 y46 BackgroundTrans c12abd1", "Objdump flags:")
         this.mainG.SetFont("s11 c11b1a9")
-        this.flags        := this.mainG.AddEdit("Background101010", IniRead(GLOBAL_INI_FILE, "SETTINGS", "FLAGS", "-m64 -O2"))
-        this.sourceFile   := this.mainG.AddEdit("Background101010", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SOURCE_FILE", "Mcode[.c / .cpp] || Mcode[.o / .obj] (CHANGE)"))
-        this.objdumpFlags := this.mainG.AddEdit("Background101010", IniRead(GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_FLAGS", "-D -C -M intel"))
+        this.flags        := this.mainG.AddEdit("Background101010", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "FLAGS", "-m64 -O2"))
+        this.sourceFile   := this.mainG.AddEdit("Background101010", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "SOURCE_FILE", "Mcode[.c / .cpp] || Mcode[.o / .obj] (CHANGE)"))
+        this.objdumpFlags := this.mainG.AddEdit("Background101010", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_FLAGS", "-D -C -M intel"))
         this.mainG.SetFont("s9 cffffff")
 
         this.browseSourceFile := this.mainG.AddButton(, "Browse Src")
@@ -212,8 +212,8 @@ class GuiMcode {
         IDE(this.cppRE, RTF.CSyntax)
         IDE(this.objdumpRE, RTF.ObjdumpHighlight)
 
-        if (IniRead(GLOBAL_INI_FILE, "SETTINGS", "SAVE_LAST_CODE", 0) && FileExist(GLOBAL_LAST_CODE)) {
-            RTF.ReplaceSel(FileRead(GLOBAL_LAST_CODE), RTF.CSyntax, this.cppRE)
+        if (IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "SAVE_LAST_CODE", 0) && FileExist(Const.GLOBAL_LAST_CODE)) {
+            RTF.ReplaceSel(FileRead(Const.GLOBAL_LAST_CODE), RTF.CSyntax, this.cppRE)
         } else {
             RTF.ReplaceSel(GLOBAL_C_CODE, RTF.CSyntax, this.cppRE)
         }
@@ -222,6 +222,10 @@ class GuiMcode {
 
     CreateSettingsGUI() {
         SwitchPage(GuiCtrlObj, pageName) {
+            static currentPage := ""
+            if (currentPage = pageName)
+                return
+
             for _, pageControls in Pages {
                 for ctrl in pageControls {
                     ctrl.Visible := false
@@ -235,6 +239,7 @@ class GuiMcode {
             }
             MCODE.CustomButton(GuiCtrlObj, "0x216e5f", "0xfeffff")
             DllCall("user32\SendMessage", "Ptr", this.settingsG.Hwnd, "UInt", 0x0127, "Ptr", 0x0001 | ((0x0001 | 0x0002) << 16), "Ptr", 0)
+            currentPage := pageName
         }
 
         GetCtrl() {
@@ -262,7 +267,7 @@ class GuiMcode {
         this.settingsG.AddText("x12 y27 c12abd1 BackgroundTrans", ASCII_MCODE).SetFont("s10")
         this.settingsG.AddText("x10 y129 w231 h282 Background005343")
         this.settingsG.AddText("x241 y31 w2 h614   Background005343")
-        this.settingsG.AddText("x10 y617 c12abd1", "MCF version: " GLOBAL_MCF_VERSION)
+        this.settingsG.AddText("x10 y617 c12abd1", "MCF version: " Const.GLOBAL_MCF_VERSION)
 
         this.settingsG.SetFont("s10", "Consolas")
         this.general_settings          := this.settingsG.AddButton("x12 y131 w229 h38 Left", "  General Settings")
@@ -288,12 +293,12 @@ class GuiMcode {
         this.settingsG.AddText("x253 y179 c0x9AA7B0", "Zig path:")
         this.settingsG.AddText("x253 y213 c0x9AA7B0", "Objdump path:")
 
-        this.MSVCPathX64   := this.settingsG.AddEdit("x373 y41  w747 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X64", "\VC\Auxiliary\Build\vcvars64.bat"))
-        this.MSVCPathX86   := this.settingsG.AddEdit("x373 y75  w747 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X86", "\VC\Auxiliary\Build\vcvars32.bat"))
-        this.GCCPath       := this.settingsG.AddEdit("x373 y109 w747 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "GCC_PATH",      "\bin\x86_64-w64-mingw32-gcc-10.3.0.exe [change]"))
-        this.ClangPath     := this.settingsG.AddEdit("x373 y143 w747 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "CLANG_PATH",    "Clang support is not yet implemented."))
-        this.ZigPath       := this.settingsG.AddEdit("x373 y177 w747 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "ZIG_PATH",      "Zig support is not yet implemented."))
-        this.objdumpPath   := this.settingsG.AddEdit("x373 y211 w747 h24 Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_PATH",  "\bin\objdump.exe [change]"))
+        this.MSVCPathX64   := this.settingsG.AddEdit("x373 y41  w747 h24 Background101010 c11b1a9", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X64", "\VC\Auxiliary\Build\vcvars64.bat"))
+        this.MSVCPathX86   := this.settingsG.AddEdit("x373 y75  w747 h24 Background101010 c11b1a9", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X86", "\VC\Auxiliary\Build\vcvars32.bat"))
+        this.GCCPath       := this.settingsG.AddEdit("x373 y109 w747 h24 Background101010 c11b1a9", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "GCC_PATH",      "\bin\x86_64-w64-mingw32-gcc-10.3.0.exe [change]"))
+        this.ClangPath     := this.settingsG.AddEdit("x373 y143 w747 h24 Background101010 c11b1a9", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "CLANG_PATH",    "Clang support is not yet implemented."))
+        this.ZigPath       := this.settingsG.AddEdit("x373 y177 w747 h24 Background101010 c11b1a9", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "ZIG_PATH",      "Zig support is not yet implemented."))
+        this.objdumpPath   := this.settingsG.AddEdit("x373 y211 w747 h24 Background101010 c11b1a9", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_PATH",  "\bin\objdump.exe [change]"))
         this.settingsG.SetFont("s9", "Consolas")
         this.browseMSVCX64 := this.settingsG.AddButton("x1130 y41  w120 h24", "Browse MSVC x64")
         this.browseMSVCX86 := this.settingsG.AddButton("x1130 y75  w120 h24", "Browse MSVC x86")
@@ -303,19 +308,19 @@ class GuiMcode {
         this.browseObjdump := this.settingsG.AddButton("x1130 y211 w120 h24", "Browse Objdump")
         this.settingsG.SetFont("s11", "Consolas")
 
-        this.generateObjdump         := this.settingsG.AddButton("x253 y261 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "GENERATE_OBJDUMP",           "✔")), this.settingsG.AddText("x281 y261 c0x12abd1", "Generate disassembler")
-        this.displayObjdump          := this.settingsG.AddButton("x253 y293 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_OBJDUMP",            "✔")), this.settingsG.AddText("x281 y293 c0x12abd1", "Display disassembler")
-        this.objdumpHighlighting     := this.settingsG.AddButton("x253 y325 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_HIGHLIGHTING",       "✔")), this.settingsG.AddText("x281 y325 c0x12abd1", "Disassembler highlighting")
-        this.displayHexMcode         := this.settingsG.AddButton("x253 y357 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_HEX_MCODE",          "✔")), this.settingsG.AddText("x281 y357 c0x12abd1", "Display Hex Mcode")
-        this.displayBase64Mcode      := this.settingsG.AddButton("x253 y389 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_BASE64_MCODE",       "")),  this.settingsG.AddText("x281 y389 c0x12abd1", "Display Base64 Mcode")
-        this.displayCompressMcode    := this.settingsG.AddButton("x253 y421 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_COMPRESS_MCODE",     "")),  this.settingsG.AddText("x281 y421 c0x12abd1", "Display Compress Mcode")
-        this.displayFullOffsetTable  := this.settingsG.AddButton("x253 y453 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_FULL_OFFSET_TABLE",  "✔")), this.settingsG.AddText("x281 y453 c0x12abd1", "Display full offset table")
-        this.showCommentsOffsetTable := this.settingsG.AddButton("x253 y485 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SHOW_COMMENTS_OFFSET_TABLE", "✔")), this.settingsG.AddText("x281 y485 c0x12abd1", "Show comments for the offset table")
-        this.multilineOutputLength   := this.settingsG.AddEdit("x453 y517 w62 h22 Background101010 c11b1a9 Center Number", IniRead(GLOBAL_INI_FILE, "SETTINGS", "MULTILINE_OUTPUT_LENGTH", "176")), this.settingsG.AddText("x253 y518 c0x9AA7B0", "Multiline output length:")
-        this.demangleSymbols         := this.settingsG.AddButton("x253 y549 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SYMBOLS",          "")),  this.settingsG.AddText("x281 y549 c0x12abd1", "Demangle symbol names in the offset table")
-        this.demangleSignatures      := this.settingsG.AddButton("x253 y581 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SIGNATURES",       "")),  this.settingsG.AddText("x281 y581 c0x12abd1", "Demangle function signatures")
-        this.checkAutoUpdate         := this.settingsG.AddButton("x253 y613 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE",          "")),  this.settingsG.AddText("x281 y613 c0x12abd1", "Check for updates on startup")
-        this.saveLastCode            := this.settingsG.AddButton("x631 y261 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SAVE_LAST_CODE", "✔")), this.settingsG.AddText("x659 y261 c0x12abd1", "Save last code")
+        this.generateObjdump         := this.settingsG.AddButton("x253 y261 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "GENERATE_OBJDUMP",           "✔")), this.settingsG.AddText("x281 y261 c0x12abd1", "Generate disassembler")
+        this.displayObjdump          := this.settingsG.AddButton("x253 y293 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_OBJDUMP",            "✔")), this.settingsG.AddText("x281 y293 c0x12abd1", "Display disassembler")
+        this.objdumpHighlighting     := this.settingsG.AddButton("x253 y325 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_HIGHLIGHTING",       "✔")), this.settingsG.AddText("x281 y325 c0x12abd1", "Disassembler highlighting")
+        this.displayHexMcode         := this.settingsG.AddButton("x253 y357 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_HEX_MCODE",          "✔")), this.settingsG.AddText("x281 y357 c0x12abd1", "Display Hex Mcode")
+        this.displayBase64Mcode      := this.settingsG.AddButton("x253 y389 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_BASE64_MCODE",       "")),  this.settingsG.AddText("x281 y389 c0x12abd1", "Display Base64 Mcode")
+        this.displayCompressMcode    := this.settingsG.AddButton("x253 y421 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_COMPRESS_MCODE",     "")),  this.settingsG.AddText("x281 y421 c0x12abd1", "Display Compress Mcode")
+        this.displayFullOffsetTable  := this.settingsG.AddButton("x253 y453 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_FULL_OFFSET_TABLE",  "✔")), this.settingsG.AddText("x281 y453 c0x12abd1", "Display full offset table")
+        this.showCommentsOffsetTable := this.settingsG.AddButton("x253 y485 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "SHOW_COMMENTS_OFFSET_TABLE", "✔")), this.settingsG.AddText("x281 y485 c0x12abd1", "Show comments for the offset table")
+        this.multilineOutputLength   := this.settingsG.AddEdit("x453 y517 w62 h22 Background101010 c11b1a9 Center Number", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "MULTILINE_OUTPUT_LENGTH", "176")), this.settingsG.AddText("x253 y518 c0x9AA7B0", "Multiline output length:")
+        this.demangleSymbols         := this.settingsG.AddButton("x253 y549 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SYMBOLS",          "")),  this.settingsG.AddText("x281 y549 c0x12abd1", "Demangle symbol names in the offset table")
+        this.demangleSignatures      := this.settingsG.AddButton("x253 y581 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SIGNATURES",       "")),  this.settingsG.AddText("x281 y581 c0x12abd1", "Demangle function signatures")
+        this.checkAutoUpdate         := this.settingsG.AddButton("x253 y613 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE",          "")),  this.settingsG.AddText("x281 y613 c0x12abd1", "Check for updates on startup")
+        this.saveLastCode            := this.settingsG.AddButton("x631 y261 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "SAVE_LAST_CODE", "✔")), this.settingsG.AddText("x659 y261 c0x12abd1", "Save last code")
 
         this.settingsG.AddText("x241 y249 w1100 h2 Background005343")
         this.settingsG.AddText("x619 y250 h400 w2  Background005343")
@@ -332,10 +337,10 @@ class GuiMcode {
         this.settingsG.AddText("x428 y160 c0x9AA7B0", "Static Symbol Substitution")
         this.settingsG.AddText("x873 y160 c0x9AA7B0", "Dynamic Symbol Substitution")
 
-        this.dynamicLinkingAuto  := this.settingsG.AddButton("x253 y41 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_AUTO", "✔")), this.settingsG.AddText("x281 y41 c0x12abd1", "Link all static symbols dynamically (if possible)")
-        this.removeLastAlignment := this.settingsG.AddButton("x253 y73 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "REMOVE_LAST_ALIGNMENT", "")), this.settingsG.AddText("x281 y73 c0x12abd1", "Remove last alignment [not implemented]")
-        this.entryPoint          := this.settingsG.AddEdit("x356 y105 w80 h22  Background101010 c11b1a9 Center Number", IniRead(GLOBAL_INI_FILE, "SETTINGS", "ENTRY_POINT", 0x0)), this.settingsG.AddText("x253 y106 c0x12abd1 BackgroundTrans", "Entry Point:            (decimal number)")
-        this.ignoreSections      := this.settingsG.AddEdit("x826 y41 w424 h24  Background101010 c11b1a9", IniRead(GLOBAL_INI_FILE, "SETTINGS", "IGNORE_SECTION", ".xdata|.pdata|.rdata$zzz")), this.settingsG.AddText("x691 y42 c0x12abd1", "Ignore Sections:")
+        this.dynamicLinkingAuto  := this.settingsG.AddButton("x253 y41 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_AUTO", "✔")), this.settingsG.AddText("x281 y41 c0x12abd1", "Link all static symbols dynamically (if possible)")
+        this.removeLastAlignment := this.settingsG.AddButton("x253 y73 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "REMOVE_LAST_ALIGNMENT", "")), this.settingsG.AddText("x281 y73 c0x12abd1", "Remove last alignment [not implemented]")
+        this.entryPoint          := this.settingsG.AddEdit("x356 y105 w80 h22  Background101010 c11b1a9 Center Number", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "ENTRY_POINT", 0x0)), this.settingsG.AddText("x253 y106 c0x12abd1 BackgroundTrans", "Entry Point:            (decimal number)")
+        this.ignoreSections      := this.settingsG.AddEdit("x826 y41 w424 h24  Background101010 c11b1a9", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "IGNORE_SECTION", ".xdata|.pdata|.rdata$zzz")), this.settingsG.AddText("x691 y42 c0x12abd1", "Ignore Sections:")
 
         this.staticLibrariesRE   := this.settingsG.AddRichEdit("Consolas", 10, "0x11b1a9", "0x101010", "x253  y414 w520 h221 0x00000080")
         this.dynamicLinkingRE    := this.settingsG.AddRichEdit("Consolas", 10, "0x11b1a9", "0x101010", "x783  y414 w250 h221 0x00000080")
@@ -349,19 +354,19 @@ class GuiMcode {
         ; =================================== COMPILER SETTINGS ===================================
 
         this.settingsG.AddText("x253 y41 c0xc44444", "Keep in mind that 90% of these settings are simply compiler flags. `nFurthermore, most of these settings will only be relevant for GCC, and possibly Clang; MSVC is supported indirectly.")
-        this.cFileMode         := this.settingsG.AddButton("x253 y90 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "C_FILE_MODE",         "")) , this.settingsG.AddText("x281 y90 c0x12abd1", "C file mode")
-        this.cppFileMode       := this.settingsG.AddButton("x253 y124 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "CPP_FILE_MODE",       "✔")), this.settingsG.AddText("x281 y124 c0x12abd1", "Cpp file mode")
-        this.removeDbgSection  := this.settingsG.AddButton("x253 y158 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "REMOVE_DBG_SECTION",  "")),  this.settingsG.AddText("x281 y158 c0x12abd1", "Remove dbg section (-fno-ident)")
-        this.optimizeSizeMcode := this.settingsG.AddButton("x253 y192 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "OPTIMIZE_SIZE_MCODE", "")),  this.settingsG.AddText("x281 y192 c0x12abd1", "Optimize Mcode size as much as possible (-falign-functions=1 -falign-jumps=1 -falign-loops=1 -falign-labels=1)")
-        this.defineNoDebug     := this.settingsG.AddButton("x253 y226 w18 h18",  IniRead(GLOBAL_INI_FILE, "SETTINGS", "DEFINE_NO_DEBUG", "")),      this.settingsG.AddText("x281 y226 c0x12abd1", "Define no debug (-DNDEBUG)")
+        this.cFileMode         := this.settingsG.AddButton("x253 y90 w18 h18",  IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "C_FILE_MODE",         "")) , this.settingsG.AddText("x281 y90 c0x12abd1", "C file mode")
+        this.cppFileMode       := this.settingsG.AddButton("x253 y124 w18 h18",  IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "CPP_FILE_MODE",       "✔")), this.settingsG.AddText("x281 y124 c0x12abd1", "Cpp file mode")
+        this.removeDbgSection  := this.settingsG.AddButton("x253 y158 w18 h18",  IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "REMOVE_DBG_SECTION",  "")),  this.settingsG.AddText("x281 y158 c0x12abd1", "Remove dbg section (-fno-ident)")
+        this.optimizeSizeMcode := this.settingsG.AddButton("x253 y192 w18 h18",  IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "OPTIMIZE_SIZE_MCODE", "")),  this.settingsG.AddText("x281 y192 c0x12abd1", "Optimize Mcode size as much as possible (-falign-functions=1 -falign-jumps=1 -falign-loops=1 -falign-labels=1)")
+        this.defineNoDebug     := this.settingsG.AddButton("x253 y226 w18 h18",  IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DEFINE_NO_DEBUG", "")),      this.settingsG.AddText("x281 y226 c0x12abd1", "Define no debug (-DNDEBUG)")
         Pages["Compiler"] := GetCtrl()
 
         ; =================================== CHANGE_PATHS SETTINGS ===================================
 
         this.settingsG.AddText("x253 y41 c0xc44444", "IMPORTANT: If you change any setting below, you must close this window and restart the program.")
-        this.setPathTempDir     := this.settingsG.AddEdit("x364 y71   w886 h24 Background101010 c11b1a9", GLOBAL_WORKING_DIR), this.settingsG.AddText("x253 y73  c0x12abd1", "Temp Dir:")
-        this.setPathSettingsIni := this.settingsG.AddEdit("x364 y105  w886 h24 Background101010 c11b1a9", GLOBAL_INI_FILE), this.settingsG.AddText("x253 y107  c0x12abd1", "Settings ini:")
-        this.setPathOutputDir   := this.settingsG.AddEdit("x364 y139  w886 h24 Background101010 c11b1a9", "This is not currently implemented..."), this.settingsG.AddText("x253 y141 c0x12abd1", "Output Dir:") ; GLOBAL_WORKING_OUTPUT_DIR
+        this.setPathTempDir     := this.settingsG.AddEdit("x364 y71   w886 h24 Background101010 c11b1a9", Const.GLOBAL_WORKING_DIR), this.settingsG.AddText("x253 y73  c0x12abd1", "Temp Dir:")
+        this.setPathSettingsIni := this.settingsG.AddEdit("x364 y105  w886 h24 Background101010 c11b1a9", Const.GLOBAL_INI_FILE), this.settingsG.AddText("x253 y107  c0x12abd1", "Settings ini:")
+        this.setPathCacheDir    := this.settingsG.AddEdit("x364 y139  w886 h24 Background101010 c11b1a9", Const.GLOBAL_WORKING_CACHE_DIR), this.settingsG.AddText("x253 y141 c0x12abd1", "Cache Dir:")
         Pages["Change_Paths"] := GetCtrl()
 
         ; =================================== CUSTOMIZE_THEME SETTINGS ===================================
@@ -433,11 +438,11 @@ class GuiMcode {
         IDE(this.staticSubstitution,  RTF.Comments)
         IDE(this.dynamicSubstitution, RTF.Comments)
 
-        RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "STATIC_LIBRARIES", GuiMcode.STATIC_LIBRARIES), "|"), "`n"), RTF.Comments, this.staticLibrariesRE)
-        RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_SELECTIVELY", GuiMcode.DYNAMIC_LINKING), "|"), "`n"), RTF.Comments, this.dynamicLinkingRE)
-        RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS", GuiMcode.IMPORT_DLL), "|"), "`n"), RTF.Comments, this.importDllsRE)
-        RTF.ReplaceSel(FormatIniData(IniRead(GLOBAL_INI_FILE, "SETTINGS", "STATIC_SUBSTITUTION", GuiMcode.STATIC_SUBSTITUTION), true), RTF.Comments, this.staticSubstitution)
-        RTF.ReplaceSel(FormatIniData(IniRead(GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_SUBSTITUTION", GuiMcode.DYNAMIC_SUBSTITUTION), true), RTF.Comments, this.dynamicSubstitution)
+        RTF.ReplaceSel(Join(StrSplit(IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "STATIC_LIBRARIES", GuiMcode.STATIC_LIBRARIES), "|"), "`n"), RTF.Comments, this.staticLibrariesRE)
+        RTF.ReplaceSel(Join(StrSplit(IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_SELECTIVELY", GuiMcode.DYNAMIC_LINKING), "|"), "`n"), RTF.Comments, this.dynamicLinkingRE)
+        RTF.ReplaceSel(Join(StrSplit(IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS", GuiMcode.IMPORT_DLL), "|"), "`n"), RTF.Comments, this.importDllsRE)
+        RTF.ReplaceSel(FormatIniData(IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "STATIC_SUBSTITUTION", GuiMcode.STATIC_SUBSTITUTION), true), RTF.Comments, this.staticSubstitution)
+        RTF.ReplaceSel(FormatIniData(IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_SUBSTITUTION", GuiMcode.DYNAMIC_SUBSTITUTION), true), RTF.Comments, this.dynamicSubstitution)
         
         SwitchPage(this.general_settings, "General")
     }
@@ -490,7 +495,7 @@ class GuiMcode {
         this.btnLoadSL := this.slpG.AddButton(, "Download") ; x890 y41  w100 h24
         this.btnSaveSL := this.slpG.AddButton(, "Extract")
         this.slpG.SetFont("s11")
-        this.loadSL  := this.slpG.AddEdit("c11b1a9 Background101010", IniRead(GLOBAL_INI_FILE, "SETTINGS", "LOAD_SLP_STATIC_LIB", "(.a / .lib) File"))
+        this.loadSL  := this.slpG.AddEdit("c11b1a9 Background101010", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "LOAD_SLP_STATIC_LIB", "(.a / .lib) File"))
         this.saveSL  := this.slpG.AddEdit("c11b1a9 Background101010")
 
         this.lvAR.ModifyCol(1, "380 Text Left")
@@ -534,19 +539,19 @@ class GuiMcode {
         this.searchSymbolsG.AddText("x460 y41 c0x9AA7B0", "=== Paths to files / directories ===")
         this.searchSymbolsG.SetFont("s10")
 
-        this.edit_symbols_RE         := this.CreateRichEdit(this.searchSymbolsG, "Consolas", 10, "0x11b1a9", "0x101010", "x10  y72 w300 h100 0x00000080")
-        this.edit_dir_file_RE        := this.CreateRichEdit(this.searchSymbolsG, "Consolas", 10, "0x11b1a9", "0x101010", "x320 y72 w600 h100 0x00000080")
+        this.edit_symbols_RE         := this.searchSymbolsG.AddRichEdit("Consolas", 10, "0x11b1a9", "0x101010", "x10  y72 w300 h100 0x00000080")
+        this.edit_dir_file_RE        := this.searchSymbolsG.AddRichEdit("Consolas", 10, "0x11b1a9", "0x101010", "x320 y72 w600 h100 0x00000080")
         this.btn_select_file         := this.searchSymbolsG.AddButton("x930 y72  w120 h24", "Browse file")
         this.btn_select_dir          := this.searchSymbolsG.AddButton("x930 y110 w120 h24", "Browse dir")
         this.btn_clear_paths         := this.searchSymbolsG.AddButton("x930 y148 w120 h24", "Clear the paths")
         this.lv_viewing_symbols      := this.searchSymbolsG.AddListView("x10 y192 w801 h236 -HScroll -Grid -Multi", ["Symbol", "Path", "Object", "Offset", "Size", "IsThin"])
-        this.edit_output_paths_RE    := this.CreateRichEdit(this.searchSymbolsG, "Consolas", 10, "0x11b1a9", "0x101010", "x10 y450 w1040 h100 0x00000080")
+        this.edit_output_paths_RE    := this.searchSymbolsG.AddRichEdit("Consolas", 10, "0x11b1a9", "0x101010", "x10 y450 w1040 h100 0x00000080")
         
         this.searchSymbolsG.SetFont("s11")
-        this.btnBox_find_all         := this.searchSymbolsG.AddButton("x821 y192 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_FIND_ALL",         ""))
-        this.btnBox_recursive_search := this.searchSymbolsG.AddButton("x821 y224 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_RECURSIVE_SEARCH", ""))
-        this.btnBox_search_static    := this.searchSymbolsG.AddButton("x821 y256 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_SEARCH_STATIC",   "✔"))
-        this.btnBox_search_dynamic   := this.searchSymbolsG.AddButton("x821 y288 w18 h18", IniRead(GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_SEARCH_DYNAMIC",   ""))
+        this.btnBox_find_all         := this.searchSymbolsG.AddButton("x821 y192 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_FIND_ALL",         ""))
+        this.btnBox_recursive_search := this.searchSymbolsG.AddButton("x821 y224 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_RECURSIVE_SEARCH", ""))
+        this.btnBox_search_static    := this.searchSymbolsG.AddButton("x821 y256 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_SEARCH_STATIC",   "✔"))
+        this.btnBox_search_dynamic   := this.searchSymbolsG.AddButton("x821 y288 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_SEARCH_DYNAMIC",   ""))
         this.searchSymbolsG.SetFont("s10")
         this.btn_search_symbols      := this.searchSymbolsG.AddButton("x821 y398 w229 h30", "Search symbols")
         this.searchSymbolsG.AddText("x851 y193 c0x12abd1", "Search all matches")
@@ -579,8 +584,8 @@ class GuiMcode {
 
         this.lv_viewing_symbols.SetTheme("0x101010", "0xa3bed1", {SELECTED: "", HOT: "0x1f3a3a"}, "0x101010", "0x00ccff", "0x005343", {SELECTED: "0x1c2f31", HOT: "0x066e6e"})
 
-        RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS",     GuiMcode.SEARCH_SYMBOLS), "|"), "`n"), RTF.Comments, this.edit_symbols_RE)
-        RTF.ReplaceSel(Join(StrSplit(IniRead(GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS_DIR", GuiMcode.SEARCH_SYMBOLS_DIR), "|"), "`n"), RTF.Comments, this.edit_dir_file_RE)
+        RTF.ReplaceSel(Join(StrSplit(IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS",     GuiMcode.SEARCH_SYMBOLS), "|"), "`n"), RTF.Comments, this.edit_symbols_RE)
+        RTF.ReplaceSel(Join(StrSplit(IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS_DIR", GuiMcode.SEARCH_SYMBOLS_DIR), "|"), "`n"), RTF.Comments, this.edit_dir_file_RE)
         RTF.ReplaceSel(GuiMcode.SEARCH_SYMBOLS_INFO, RTF.ErrorLog, this.edit_output_paths_RE)
 
         IDE(this.edit_symbols_RE,      RTF.Comments)
@@ -641,13 +646,13 @@ class GuiMcode {
         ;########################################################## main ########################################################
         this.mainG.OnEvent("Size", GuiReSizer)
         this.mainG.OnEvent("Close", (*) {
-            IniWrite(this.objdumpFlags.Text,   GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_FLAGS")
-            IniWrite(this.sourceFile.Text,     GLOBAL_INI_FILE, "SETTINGS", "SOURCE_FILE")
-            IniWrite(this.flags.Text,          GLOBAL_INI_FILE, "SETTINGS", "FLAGS")
+            IniWrite(this.objdumpFlags.Text,   Const.GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_FLAGS")
+            IniWrite(this.sourceFile.Text,     Const.GLOBAL_INI_FILE, "SETTINGS", "SOURCE_FILE")
+            IniWrite(this.flags.Text,          Const.GLOBAL_INI_FILE, "SETTINGS", "FLAGS")
 
             if (this.saveLastCode.Text) {
-                try FileDelete(GLOBAL_LAST_CODE)
-                FileAppend(this.cppRE.Text, GLOBAL_LAST_CODE)
+                try FileDelete(Const.GLOBAL_LAST_CODE)
+                FileAppend(this.cppRE.Text, Const.GLOBAL_LAST_CODE)
             }
 
             ExitApp()
@@ -737,8 +742,8 @@ class GuiMcode {
             this.logG.Show("w700 h260")
             this.logLinkerRE.Text := "Please wait... Loading log."
 
-            if (FileExist(GLOBAL_MCF_LINKER_LOG)) {
-                MCFLog := FileRead(GLOBAL_MCF_LINKER_LOG)
+            if (FileExist(Const.GLOBAL_MCF_LINKER_LOG)) {
+                MCFLog := FileRead(Const.GLOBAL_MCF_LINKER_LOG)
             } else MCFLog := ""
 
             if (MCFLog != "") {
@@ -754,49 +759,49 @@ class GuiMcode {
         ;########################################################## settings ####################################################
 
         this.settingsG.OnEvent("Close", (*) {
-            IniWrite(this.MSVCPathX64.Text, GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X64")
-            IniWrite(this.MSVCPathX86.Text, GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X86")
-            IniWrite(this.ClangPath.Text,   GLOBAL_INI_FILE, "SETTINGS", "CLANG_PATH")
-            IniWrite(this.ZigPath.Text,     GLOBAL_INI_FILE, "SETTINGS", "ZIG_PATH")
-            IniWrite(this.GCCPath.Text,     GLOBAL_INI_FILE, "SETTINGS", "GCC_PATH")
-            IniWrite(this.objdumpPath.Text, GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_PATH")
+            IniWrite(this.MSVCPathX64.Text, Const.GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X64")
+            IniWrite(this.MSVCPathX86.Text, Const.GLOBAL_INI_FILE, "SETTINGS", "MSVC_PATH_X86")
+            IniWrite(this.ClangPath.Text,   Const.GLOBAL_INI_FILE, "SETTINGS", "CLANG_PATH")
+            IniWrite(this.ZigPath.Text,     Const.GLOBAL_INI_FILE, "SETTINGS", "ZIG_PATH")
+            IniWrite(this.GCCPath.Text,     Const.GLOBAL_INI_FILE, "SETTINGS", "GCC_PATH")
+            IniWrite(this.objdumpPath.Text, Const.GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_PATH")
 
-            IniWrite(this.generateObjdump.Text         != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "GENERATE_OBJDUMP")
-            IniWrite(this.displayObjdump.Text          != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_OBJDUMP")
-            IniWrite(this.objdumpHighlighting.Text     != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_HIGHLIGHTING")
-            IniWrite(this.displayHexMcode.Text         != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_HEX_MCODE")
-            IniWrite(this.displayBase64Mcode.Text      != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_BASE64_MCODE")
-            IniWrite(this.displayCompressMcode.Text    != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_COMPRESS_MCODE")
-            IniWrite(this.displayFullOffsetTable.Text  != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_FULL_OFFSET_TABLE")
-            IniWrite(this.showCommentsOffsetTable.Text != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "SHOW_COMMENTS_OFFSET_TABLE")
-            IniWrite(this.checkAutoUpdate.Text         != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE")
-            IniWrite(this.multilineOutputLength.Text, GLOBAL_INI_FILE, "SETTINGS", "MULTILINE_OUTPUT_LENGTH")
+            IniWrite(this.generateObjdump.Text         != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "GENERATE_OBJDUMP")
+            IniWrite(this.displayObjdump.Text          != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_OBJDUMP")
+            IniWrite(this.objdumpHighlighting.Text     != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "OBJDUMP_HIGHLIGHTING")
+            IniWrite(this.displayHexMcode.Text         != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_HEX_MCODE")
+            IniWrite(this.displayBase64Mcode.Text      != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_BASE64_MCODE")
+            IniWrite(this.displayCompressMcode.Text    != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_COMPRESS_MCODE")
+            IniWrite(this.displayFullOffsetTable.Text  != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "DISPLAY_FULL_OFFSET_TABLE")
+            IniWrite(this.showCommentsOffsetTable.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "SHOW_COMMENTS_OFFSET_TABLE")
+            IniWrite(this.checkAutoUpdate.Text         != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE")
+            IniWrite(this.multilineOutputLength.Text, Const.GLOBAL_INI_FILE, "SETTINGS", "MULTILINE_OUTPUT_LENGTH")
 
-            IniWrite(this.cFileMode.Text           != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "C_FILE_MODE")
-            IniWrite(this.cppFileMode.Text         != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "CPP_FILE_MODE")
-            IniWrite(this.removeDbgSection.Text    != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "REMOVE_DBG_SECTION")
-            IniWrite(this.optimizeSizeMcode.Text   != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "OPTIMIZE_SIZE_MCODE")
-            IniWrite(this.defineNoDebug.Text       != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DEFINE_NO_DEBUG")
-            IniWrite(this.demangleSymbols.Text     != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SYMBOLS")
-            IniWrite(this.demangleSignatures.Text  != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SIGNATURES")
-            IniWrite(this.saveLastCode.Text        != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "SAVE_LAST_CODE")
-            IniWrite(this.dynamicLinkingAuto.Text  != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_AUTO")
-            IniWrite(this.removeLastAlignment.Text != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "REMOVE_LAST_ALIGNMENT")
-            IniWrite(this.entryPoint.Text    , GLOBAL_INI_FILE, "SETTINGS", "ENTRY_POINT")
-            IniWrite(this.ignoreSections.Text, GLOBAL_INI_FILE, "SETTINGS", "IGNORE_SECTION")
-            IniWrite(Join(StrSplit(RegExReplace(this.importDllsRE.Text, "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS")
-            IniWrite(Join(StrSplit(RegExReplace(this.dynamicLinkingRE.Text, "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_SELECTIVELY")
-            IniWrite(Join(StrSplit(RegExReplace(this.staticLibrariesRE.Text, "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "STATIC_LIBRARIES")
-            IniWrite(FormatIniData(this.staticSubstitution.Text), GLOBAL_INI_FILE, "SETTINGS", "STATIC_SUBSTITUTION")
-            IniWrite(FormatIniData(this.dynamicSubstitution.Text), GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_SUBSTITUTION")
+            IniWrite(this.cFileMode.Text           != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "C_FILE_MODE")
+            IniWrite(this.cppFileMode.Text         != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "CPP_FILE_MODE")
+            IniWrite(this.removeDbgSection.Text    != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "REMOVE_DBG_SECTION")
+            IniWrite(this.optimizeSizeMcode.Text   != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "OPTIMIZE_SIZE_MCODE")
+            IniWrite(this.defineNoDebug.Text       != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "DEFINE_NO_DEBUG")
+            IniWrite(this.demangleSymbols.Text     != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SYMBOLS")
+            IniWrite(this.demangleSignatures.Text  != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SIGNATURES")
+            IniWrite(this.saveLastCode.Text        != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "SAVE_LAST_CODE")
+            IniWrite(this.dynamicLinkingAuto.Text  != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_AUTO")
+            IniWrite(this.removeLastAlignment.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "REMOVE_LAST_ALIGNMENT")
+            IniWrite(this.entryPoint.Text    , Const.GLOBAL_INI_FILE, "SETTINGS", "ENTRY_POINT")
+            IniWrite(this.ignoreSections.Text, Const.GLOBAL_INI_FILE, "SETTINGS", "IGNORE_SECTION")
+            IniWrite(Join(StrSplit(RegExReplace(this.importDllsRE.Text, "\R+", "`n"), "`n"), "|"), Const.GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS")
+            IniWrite(Join(StrSplit(RegExReplace(this.dynamicLinkingRE.Text, "\R+", "`n"), "`n"), "|"), Const.GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_SELECTIVELY")
+            IniWrite(Join(StrSplit(RegExReplace(this.staticLibrariesRE.Text, "\R+", "`n"), "`n"), "|"), Const.GLOBAL_INI_FILE, "SETTINGS", "STATIC_LIBRARIES")
+            IniWrite(FormatIniData(this.staticSubstitution.Text), Const.GLOBAL_INI_FILE, "SETTINGS", "STATIC_SUBSTITUTION")
+            IniWrite(FormatIniData(this.dynamicSubstitution.Text), Const.GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_SUBSTITUTION")
 
-            RegWrite(this.setPathTempDir.Text,     "REG_SZ", "HKCU\Software\MCF", "TEMP_DIR")
-            RegWrite(this.setPathSettingsIni.Text, "REG_SZ", "HKCU\Software\MCF", "TEMP_SETTINGS_INI")
-            RegWrite(this.setPathOutputDir.Text,   "REG_SZ", "HKCU\Software\MCF", "TEMP_OUTPUT")
+            RegWrite(Const.GLOBAL_WORKING_DIR       := this.setPathTempDir.Text,     "REG_SZ", "HKCU\Software\MCF", "TEMP_DIR")
+            RegWrite(Const.GLOBAL_INI_FILE          := this.setPathSettingsIni.Text, "REG_SZ", "HKCU\Software\MCF", "TEMP_SETTINGS_INI")
+            RegWrite(Const.GLOBAL_WORKING_CACHE_DIR := this.setPathCacheDir.Text,    "REG_SZ", "HKCU\Software\MCF", "TEMP_CACHE")
         })
 
-        this.showTempDir.OnEvent("Click",    (*) => Run(GLOBAL_WORKING_DIR))
-        this.checkUpdate.OnEvent("Click",    (*) => new_thread_check_update.AsyncCall("CheckForUpdates", "Vedette1", "MCF.ahk", GLOBAL_MCF_VERSION, true))
+        this.showTempDir.OnEvent("Click",    (*) => Run(Const.GLOBAL_WORKING_DIR))
+        this.checkUpdate.OnEvent("Click",    (*) => new_thread_check_update.AsyncCall("CheckForUpdates", "Vedette1", "MCF.ahk", Const.GLOBAL_MCF_VERSION, true))
 
         this.browseMSVCX64.OnEvent("Click", (*) => this.MSVCPathX64.Text    := (sel := FileSelect(,,, "Bat File (*.bat)")) ? sel : this.MSVCPathX64.Text)
         this.browseMSVCX86.OnEvent("Click", (*) => this.MSVCPathX86.Text    := (sel := FileSelect(,,, "Bat File (*.bat)")) ? sel : this.MSVCPathX86.Text)
@@ -833,11 +838,11 @@ class GuiMcode {
             this.hexDumpRE.Text   := ""
             this.COFFinfoRE.Text  := ""
             this.copyMcodeRE.Text := ""
-            if !(FileExist(Compiler.tempO)) {
+            if !(FileExist(Const.GLOBAL_TEMP_OBJ)) {
                 return RTF.ReplaceSel("The COFF file was not found. Generate the Mcode, and click on this button again, or drag the obj file into this window.", RTF.HexDump, this.hexDumpRE)
             }
 
-            cf := COFF(Compiler.tempO)
+            cf := COFF(Const.GLOBAL_TEMP_OBJ)
             if (cf is Error) {
                 return RTF.ReplaceSel("Unexpected error. Most likely, the specified file is not (.o/.obj) or the file is corrupted.", RTF.HexDump, this.hexDumpRE)
             }
@@ -885,7 +890,7 @@ class GuiMcode {
         ;####################################################### SLP ######################################################
 
         this.slpG.OnEvent("Close", (*) {
-            IniWrite(this.loadSL.Text, GLOBAL_INI_FILE, "SETTINGS", "LOAD_SLP_STATIC_LIB")
+            IniWrite(this.loadSL.Text, Const.GLOBAL_INI_FILE, "SETTINGS", "LOAD_SLP_STATIC_LIB")
         })
 
         this.slpG.OnEvent("Size", GuiReSizer)
@@ -904,7 +909,7 @@ class GuiMcode {
 
         this.lvAR.OnEvent("DoubleClick", (*) {
             if (row := this.lvAR.GetNext(0, "F")) {
-                this.saveSL.Text := GLOBAL_WORKING_DIR "\" this.lvAR.GetText(row, 2)
+                this.saveSL.Text := Const.GLOBAL_WORKING_DIR "\" this.lvAR.GetText(row, 2)
             }
         })
 
@@ -931,13 +936,13 @@ class GuiMcode {
         ;########################################################## Search Symbols ########################################################
 
         this.searchSymbolsG.OnEvent("Close", (*) {
-            IniWrite(Join(StrSplit(RegExReplace(this.edit_symbols_RE.Text,  "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS")
-            IniWrite(Join(StrSplit(RegExReplace(this.edit_dir_file_RE.Text, "\R+", "`n"), "`n"), "|"), GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS_DIR")
+            IniWrite(Join(StrSplit(RegExReplace(this.edit_symbols_RE.Text,  "\R+", "`n"), "`n"), "|"), Const.GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS")
+            IniWrite(Join(StrSplit(RegExReplace(this.edit_dir_file_RE.Text, "\R+", "`n"), "`n"), "|"), Const.GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS_DIR")
 
-            IniWrite(this.btnBox_find_all.Text         != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_FIND_ALL")
-            IniWrite(this.btnBox_recursive_search.Text != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_RECURSIVE_SEARCH")
-            IniWrite(this.btnBox_search_static.Text    != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_SEARCH_STATIC")
-            IniWrite(this.btnBox_search_dynamic.Text   != "" ? "✔" : "", GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_SEARCH_DYNAMIC")
+            IniWrite(this.btnBox_find_all.Text         != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_FIND_ALL")
+            IniWrite(this.btnBox_recursive_search.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_RECURSIVE_SEARCH")
+            IniWrite(this.btnBox_search_static.Text    != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_SEARCH_STATIC")
+            IniWrite(this.btnBox_search_dynamic.Text   != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_SEARCH_DYNAMIC")
         })
 
         SelectPath(type) {
@@ -1064,7 +1069,7 @@ class GuiMcode {
 
         ; Если src это COFF (.o|.obj), то линковщик соберет Mcode без зависимостей от компилятора. COFF копируеться - задел на будущее...
         if (srcIsCOFF) {
-            try FileCopy(src, GLOBAL_WORKING_DIR "\temp.o", true)
+            try FileCopy(src, Const.GLOBAL_WORKING_DIR "\temp.o", true)
             Objdump(src)
             Linker(src)
         } else { ; Если src это код, то сперва идет компиляция, а потом линковка...
@@ -1078,8 +1083,8 @@ class GuiMcode {
                     return this.Error_log(er.Message)
 
                 RTF.ReplaceSel("Compilation is completed in " QPC() - assemblingTime " milliseconds...`n", RTF.Log, this.warningRE,,, true)
-                Objdump(Compiler.tempO)
-                Linker(Compiler.tempO)
+                Objdump(Const.GLOBAL_TEMP_OBJ)
+                Linker(Const.GLOBAL_TEMP_OBJ)
             } else {
                 if (set.MSVCPath != "" && !FileExist(set.MSVCPath)) ; Проверка валидности MSVC патча* (компилятора)
                     return this.Error_log("Invalid MSVC path: " set.MSVCPath "`n`nSpecify the absolute path to MSVC [\VC\Auxiliary\Build\vcvars64.bat].")
@@ -1090,8 +1095,8 @@ class GuiMcode {
                     return this.Error_log(er.Message)
 
                 RTF.ReplaceSel("Compilation is completed in " QPC() - assemblingTime " milliseconds...`n", RTF.Log, this.warningRE,,, true)
-                Objdump(Compiler.tempO)
-                Linker(Compiler.tempO)
+                Objdump(Const.GLOBAL_TEMP_OBJ)
+                Linker(Const.GLOBAL_TEMP_OBJ)
             }
         }
 
@@ -1110,7 +1115,7 @@ class GuiMcode {
                         this.waitSectionObjdump.Delete()
                         this.waitSectionObjdump.Add(["See the error below..."])
                 } else {
-                    this.objdump := Binary.ParseObjdumpToMap(FileRead(Compiler.tempAsm), &prop)
+                    this.objdump := Binary.ParseObjdumpToMap(FileRead(Const.GLOBAL_TEMP_ASM), &prop)
                     this.waitSectionObjdump.Delete()
                     this.waitSectionObjdump.Add(prop)
                 }
@@ -1182,14 +1187,14 @@ class GuiMcode {
                 }
                 if (this.mcode.dbg.ALL) {
                     this.logLinkerRE.Text := ""
-                    try FileDelete(GLOBAL_MCF_LINKER_LOG)
-                    FileAppend(this.mcode.dbg.ALL, GLOBAL_MCF_LINKER_LOG, "")
+                    try FileDelete(Const.GLOBAL_MCF_LINKER_LOG)
+                    FileAppend(this.mcode.dbg.ALL, Const.GLOBAL_MCF_LINKER_LOG, "")
                     ; RTF.ReplaceSel(this.mcode.dbg.ALL, RTF.VsCodeAhk, this.logLinkerRE)
                 }
             } catch as er {
                 this.Error_log("ERORR Linker:`n" er.Message "`n" er.Line " " er.File "`nFor more information about the error, see the log.")
-                try FileDelete(GLOBAL_MCF_LINKER_LOG)
-                FileAppend(this.cf.dbgLogInfo, GLOBAL_MCF_LINKER_LOG, "")
+                try FileDelete(Const.GLOBAL_MCF_LINKER_LOG)
+                FileAppend(this.cf.dbgLogInfo, Const.GLOBAL_MCF_LINKER_LOG, "")
             }
         }
     }

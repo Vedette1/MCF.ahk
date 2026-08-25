@@ -10,46 +10,8 @@ try global new_thread_check_update := Worker(new_script_thread_check_update,, "M
 
 class main {
     __New() {
-        global GLOBAL_INI_FILE, GLOBAL_WORKING_DIR, GLOBAL_WORKING_OUTPUT_DIR
-        ; DirCreate(GLOBAL_WORKING_DIR)
-        ; DirCreate(GLOBAL_WORKING_OUTPUT_DIR)
-
-        defaultTempDir     := GLOBAL_WORKING_DIR
-        defaultSettingsIni := GLOBAL_INI_FILE
-        defaultOutputDir   := GLOBAL_WORKING_OUTPUT_DIR
-        newTempDirPath     := RegRead("HKCU\Software\MCF", "TEMP_DIR", "")
-        newSettingsIniPath := RegRead("HKCU\Software\MCF", "TEMP_SETTINGS_INI", "")
-        newOutputDir       := RegRead("HKCU\Software\MCF", "TEMP_OUTPUT", "")
-
-        try {
-            DirCreate(newTempDirPath)
-            GLOBAL_WORKING_DIR := newTempDirPath
-        } catch {
-            DirCreate(defaultTempDir)
-            GLOBAL_WORKING_DIR := defaultTempDir
-        }
-
-        try {
-            SplitPath(newSettingsIniPath,,,&ext)
-            if (ext == "ini") {
-                FileAppend("", newSettingsIniPath, "UTF-16")
-                GLOBAL_INI_FILE := newSettingsIniPath
-            } else {
-                GLOBAL_INI_FILE := defaultSettingsIni
-            }
-        } catch {
-            GLOBAL_INI_FILE := defaultSettingsIni
-        }
-
-        ; try {
-        ;     DirCreate(newOutputDir)
-        ;     GLOBAL_WORKING_OUTPUT_DIR := newOutputDir
-        ; } catch {
-        ;     GLOBAL_WORKING_OUTPUT_DIR := defaultOutputDir
-        ; }
-
-        if (IniRead(GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE", false)) {
-            new_thread_check_update.AsyncCall("CheckForUpdates", "Vedette1", "MCF.ahk", GLOBAL_MCF_VERSION, false)
+        if (IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE", false)) {
+            new_thread_check_update.AsyncCall("CheckForUpdates", "Vedette1", "MCF.ahk", Const.GLOBAL_MCF_VERSION, false)
         }
         GuiMcode()
     }
