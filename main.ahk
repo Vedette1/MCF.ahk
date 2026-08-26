@@ -2,6 +2,7 @@
 #SingleInstance Force
 
 #DllLoad "msftedit.dll"
+#DllLoad "dbghelp.dll"
 #Include const.ahk
 #Include MCF_GUI.ahk
 #Include threads\CheckForUpdates.ahk

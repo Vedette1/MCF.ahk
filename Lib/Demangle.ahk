@@ -4,7 +4,7 @@
 
 /**
  * - Данный класс представляет собой деманглер (перевод искаженных символов в человекочитаемый формат). Суть кода - получить человекочитаемый символ + сигнатуру символа.
- * - Код работает только с GCC, и вроде бы Clang (MSVC не поддерживается).
+ * - Код работает только с GCC, и вроде бы Clang (MSVC поддерживается начиная с MCF 1.0.6).
  * - Исходный код: https://github.com/gcc-mirror/gcc/blob/master/libiberty/cp-demangle.c
  * - __cxa_demangle (cp-demangle.o) взят из libstdc++.a. Это GPLv3 + GCC Runtime Library Exception (версия 3.1).
  * - Деманглер GCC x64: \lib\gcc\x86_64-w64-mingw32\10.3.0\libstdc++.a    (obj file - cp-demangle.o)
@@ -721,59 +721,59 @@ class Demangle {
     }
 
 
-    static GetSymbols(symbols) {
-        arr := []
-        if (symbols is Array) {
-            for sym in symbols {
-                if (!InStr(sym, "?") && InStr(sym, "_Z")) {
-                    actualSym := (InStr(sym, "__Z") == 1) ? SubStr(sym, 2) : sym
-                    pResult := DllCall(this.ptr, "AStr", actualSym, "Ptr", 0, "Ptr", 0, "Int*", &status := 0, "Cdecl Ptr")
+    static IsString(symbol) => InStr(symbol, "??_C@") == 1 ; В MSVC строковые литералы всегда начинаются с ??_C@ - (??_C@_0 для char, ??_C@_1 для wchar_t и т.д.)
 
-                    if (status == 0 && pResult) { ; status == 0 означает успешный деманглинг
-                        arr.Push(StrGet(pResult, "CP0"))
-                        DllCall("msvcrt\free", "Ptr", pResult, "Cdecl")
-                    } else {
-                        arr.Push(sym)
-                    }
-                } else {
-                    arr.Push(sym)
-                }
-            }
-            return arr
-            
-        } else if (symbols is String) {
-            if (!InStr(symbols, "?") && InStr(symbols, "_Z")) {
-                actualSym := (InStr(symbols, "__Z") == 1) ? SubStr(symbols, 2) : symbols
-                pResult := DllCall(this.ptr, "AStr", actualSym, "Ptr", 0, "Ptr", 0, "Int*", &status := 0, "Cdecl Ptr")
-                
-                if (status == 0 && pResult) {
-                    str := StrGet(pResult, "CP0")
-                    DllCall("msvcrt\free", "Ptr", pResult, "Cdecl")
-                } else {
-                    str := symbols
+
+    static ExportedSymbolsDump(exportedSymbols, demanglLvl) {
+        exportedSymbolsStr := "offset := Map()`n"
+        for value, symbol in exportedSymbols {
+            if (demanglLvl) {
+                demSym := this.GetSymbolToObj(symbol.symbol, value)
+                switch (demanglLvl) {
+                    case 1 : exportedSymbolsStr .= "offset[" Chr(34) demSym.symbol Chr(34) "] := ptr + " symbol.offset " `; " symbol.opt "`n"
+                    case 2 : exportedSymbolsStr .= "offset[" Chr(34) symbol.symbol Chr(34) "] := ptr + " symbol.offset " `; " symbol.opt . demSym.signature "`n"
+                    case 3 : exportedSymbolsStr .= "offset[" Chr(34) demSym.symbol Chr(34) "] := ptr + " symbol.offset " `; " symbol.opt . demSym.signature "`n"
                 }
             } else {
-                str := symbols
+                exportedSymbolsStr .= "offset[" Chr(34) symbol.symbol Chr(34) "] := ptr + " symbol.offset " `; " symbol.opt "`n"
             }
-            return str
         }
+        return RTrim(exportedSymbolsStr, "`n")
     }
 
 
-    static GetSymbolToObj(symbol) {
-        if (!InStr(symbol, "?") && InStr(symbol, "_Z")) {
-            actualSym := (InStr(symbol, "__Z") == 1) ? SubStr(symbol, 2) : symbol
-            pResult := DllCall(this.ptr, "AStr", actualSym, "Ptr", 0, "Ptr", 0, "Int*", &status := 0, "Cdecl Ptr")
-            
+    static GetSymbolToObj(sym, idx?) {
+        demSymbol := sym, demSignature := ""
+        if (SubStr(sym, 1, 1) == "?") {
+            if (this.IsString(sym)) {
+                if (IsSet(idx)) {
+                    return {symbol: "[String_Literal_" idx "]", signature: sym}
+                }
+                return sym
+            }
+
+            VarSetStrCapacity(&symbol, 2048)
+            if (DllCall("dbghelp\UnDecorateSymbolNameW", "WStr", sym, "Str", symbol, "UInt", 1024, "UInt", 0x0002 | 0x0080 | 0x0004, "UInt")) { ; символ
+                demSymbol := StrSplit(symbol, "(")[1]
+            }
+            if (DllCall("dbghelp\UnDecorateSymbolNameW", "WStr", sym, "Str", symbol, "UInt", 1024, "UInt", 0x0000, "UInt")) { ; сига
+                demSignature := symbol
+            }
+            return {symbol: demSymbol, signature: demSignature}
+        } else if (!InStr(sym, "?") && InStr(sym, "_Z")) {
+            actualSym := (InStr(sym, "__Z") == 1) ? SubStr(sym, 2) : sym
+            pResult := DllCall(this.ptr, "AStr", actualSym, "Ptr", 0, "Ptr", 0, "Int*", &status := 0, "Cdecl Ptr") ; __cxa_demangle
             if (status == 0 && pResult) {
-                demSym := StrGet(pResult, "CP0")
+                demangled := StrGet(pResult, "CP0")
                 DllCall("msvcrt\free", "Ptr", pResult, "Cdecl")
-                return {name: StrSplit(demSym, "(")[1], signature: " | " demSym}
+                return {symbol: StrSplit(demangled, "(")[1], signature: demangled}
+            } else {
+                return {symbol: sym, signature: ""}
             }
         }
-        return {name: symbol, signature: ""}
+        return {symbol: sym, signature: ""}
     }
 }
 
-; MsgBox Demangle.GetSymbols("_Z6printfPKcz")
+; MsgBox Demangle.GetSymbolToObj("?func2@@YAPEBDXZ").symbol
 ; ["_Z3funi", "_Z3fooPKiS0_", "_Z6printfPKcz", "_Z8test_sind"]

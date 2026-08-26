@@ -282,7 +282,7 @@ class COFF {
      * - Если `dynamicLinking := false`, то класс не будет пытаться патчить asm инструкции. То есть, если компилятор подразумевает статическую линковку для определенного символа, то он будет статически слинкован.
      * @param {Array} staticLibraries - Массив экземпляров класса StaticLibraryParser для статической линковки.
      */
-    __New(obj, importDll := ["User32", "msvcrt", "Kernel32"], ignoreSections := [".pdata", ".xdata", ".rdata$zzz"], fullOffsetTable := true, entryPoint := 0x0, dynamicLinking := true, staticLibraries := [], dynamicSubstitution := Map(), staticSubstitution := Map(), demangle := 1) {
+    __New(obj, importDll := ["User32", "msvcrt", "Kernel32"], ignoreSections := [".pdata", ".xdata", ".rdata$zzz"], fullOffsetTable := true, entryPoint := 0x0, dynamicLinking := true, staticLibraries := [], dynamicSubstitution := Map(), staticSubstitution := Map(), demangleLvl := 1) {
         this.obj                 := obj                 ; Путь до COFF (.o / .obj) файла.
         this.importDll           := importDll           ; Массив dll которые используются в конечном Mcode (если есть внешнии символы).
         this.ignoreSections      := ignoreSections      ; Массив секций, которые будут игнорироватся при линковке (в основном сюда ничего не нужно дописывать).
@@ -292,7 +292,7 @@ class COFF {
         this.staticLibraries     := staticLibraries     ; Массив статических библиотек (экземпляры StaticLibraryParser).
         this.dynamicSubstitution := dynamicSubstitution ; Подмена динамических символов.
         this.staticSubstitution  := staticSubstitution  ; Подмена статических символов.
-        this.demangle            := demangle            ; Деманглирование символов в таблице смещений. Работает только с GCC / Clang. MSVC не поддерживается.
+        this.demangleLvl         := demangleLvl         ; Деманглирование символов в таблице смещений. Работает только с GCC / Clang. MSVC не поддерживается.
         this.dbgLogInfo          := ""
 
         this.imports           := []  ; Массив объектов импортируемых символов из dll (__imp_).
@@ -440,7 +440,7 @@ class COFF {
     ReadComdatInfo() {
         this.comdatSections := Map() ; key = SectionIndex (1-based), value = объект с COMDAT-данными из aux-записи
         for symIdx, symbol in this.symbolsMap {
-            if (symbol.StorageClass == COFF.IMAGE_SYMBOL_STORAGE_CLASS.Get("IMAGE_SYM_CLASS_STATIC") && symbol.NumberOfAuxSymbols > 0 && symbol.SectionIndex > 0) {
+            if (symbol.StorageClass == 3 && symbol.NumberOfAuxSymbols > 0 && symbol.SectionIndex > 0) {
                 secIdx := symbol.SectionIndex
                 if (secIdx > this.sections.Length)
                     continue
@@ -555,8 +555,7 @@ class COFF {
         IAT                  := "|"
         unresolvedSymbolsNew := []
         shortDbgInfo         := ""
-
-        this.dbgLogInfo := "[Layout] Analyzing and merging sections:`n"
+        this.dbgLogInfo      := "[Layout] Analyzing and merging sections:`n"
 
         ; --- Очередь объектных файлов для статической линковки ---
         objQueue := [{coff: this, originKey: "main.obj"}]
@@ -997,23 +996,8 @@ class COFF {
                 }
                 
                 if (secOffset != -1) {
-                    this.exportedSymbols[i] := {symbol: symbol.Name, offset: Format("0x{:X}", secOffset + symbol.Value), opt: symbol.StorageClass != 2 ? " [dispensable]" : ""}
+                    this.exportedSymbols[i] := {symbol: symbol.Name, offset: Format("0x{:X}", secOffset + symbol.Value), opt: symbol.StorageClass != 2 ? " [dispensable] | " : ""}
                 }
-            }
-        }
-
-        ;============================================ конечный Mcode + таблица ============================================
-        exportedSymbolsStr := "offset := Map()`n"
-        for value, symbol in this.exportedSymbols {
-            if (this.demangle) {
-                demSym := Demangle.GetSymbolToObj(symbol.symbol)
-                switch (this.demangle) {
-                    case 1 : exportedSymbolsStr .= "offset[" Chr(34) demSym.name   Chr(34) "] := ptr + " symbol.offset " `; " value symbol.opt "`n"
-                    case 2 : exportedSymbolsStr .= "offset[" Chr(34) symbol.symbol Chr(34) "] := ptr + " symbol.offset " `; " value symbol.opt . demSym.signature "`n"
-                    case 3 : exportedSymbolsStr .= "offset[" Chr(34) demSym.name   Chr(34) "] := ptr + " symbol.offset " `; " value symbol.opt . demSym.signature "`n"
-                }
-            } else {
-                exportedSymbolsStr .= "offset[" Chr(34) symbol.symbol Chr(34) "] := ptr + " symbol.offset " `; " value symbol.opt "`n"
             }
         }
 
@@ -1022,7 +1006,7 @@ class COFF {
             hex:      Binary.BinaryToStrin(mcode, mcode.Size, 12)           . RTrim(IAT, "|"),
             base64:   Binary.BinaryToStrin(mcode, mcode.Size, 1)            . RTrim(IAT, "|"),
             compress: Binary.BinaryToCompressedBase64(mcode, mcode.Size, 2) . RTrim(IAT, "|"),
-            table:    RTrim(exportedSymbolsStr, "`n"),
+            table:    Demangle.ExportedSymbolsDump(this.exportedSymbols, this.demangleLvl),
             dbg:      {ALL: this.dbgLogInfo, short: shortDbgInfo}
         }
     }

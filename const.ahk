@@ -51,7 +51,7 @@
 
     static GLOBAL_MCF_LINKER_LOG     => this.GLOBAL_WORKING_DIR "\MCF_Linker_log.log"
     static GLOBAL_LAST_CODE          => this.GLOBAL_WORKING_DIR "\LastCode.cpp"
-    static GLOBAL_MCF_VERSION        => "1.0.5"
+    static GLOBAL_MCF_VERSION        => "1.0.6"
     static GLOBAL_AHK_VERSION        => "AutoHotkey_H 2.1-alpha.18"
 
     static GLOBAL_TEMP_CPP           => this.GLOBAL_WORKING_DIR "\temp.cpp"
