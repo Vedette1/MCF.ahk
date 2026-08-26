@@ -586,43 +586,43 @@ class COFF {
                 }
 
                 ; --- COMDAT-обработка ---
-                if (coffObj.comdatSections.Has(i)) {
-                    comdat     := coffObj.comdatSections[i]
-                    comdatName := comdat.SymbolName
-                    selection  := comdat.Selection
+                ; if (coffObj.comdatSections.Has(i)) {
+                ;     comdat     := coffObj.comdatSections[i]
+                ;     comdatName := comdat.SymbolName
+                ;     selection  := comdat.Selection
 
-                    if (comdatRegistry.Has(comdatName)) {
-                        existing := comdatRegistry[comdatName]
+                ;     if (comdatRegistry.Has(comdatName)) {
+                ;         existing := comdatRegistry[comdatName]
 
-                        if (selection == COFF.IMAGE_COMDAT_SELECT_NODUPLICATES) {
-                            _ := 1 ; заглушка, ибо IMAGE_COMDAT_SELECT_NODUPLICATES работает криво с MSVC. Насколько я понял ошубки тригерят одноименные секции, а не символы.
-                            ; throw Error("COMDAT NODUPLICATES violation: symbol '" comdatName "' in '" coffObj.obj "'")
-                        } else if (selection == COFF.IMAGE_COMDAT_SELECT_SAME_SIZE) {
-                            if (existing.size != secSize)
-                                throw Error("COMDAT SAME_SIZE violation: symbol '" comdatName "' (" existing.size " vs " secSize ")")
-                            this.dbgLogInfo .= "`t[COMDAT SAME_SIZE] Duplicate '" comdatName "' skipped.`n"
+                ;         if (selection == COFF.IMAGE_COMDAT_SELECT_NODUPLICATES) {
+                ;             _ := 1 ; заглушка, ибо IMAGE_COMDAT_SELECT_NODUPLICATES работает криво с MSVC. Насколько я понял ошубки тригерят одноименные секции, а не символы.
+                ;             ; throw Error("COMDAT NODUPLICATES violation: symbol '" comdatName "' in '" coffObj.obj "'")
+                ;         } else if (selection == COFF.IMAGE_COMDAT_SELECT_SAME_SIZE) {
+                ;             if (existing.size != secSize)
+                ;                 throw Error("COMDAT SAME_SIZE violation: symbol '" comdatName "' (" existing.size " vs " secSize ")")
+                ;             this.dbgLogInfo .= "`t[COMDAT SAME_SIZE] Duplicate '" comdatName "' skipped.`n"
 
-                        } else if (selection == COFF.IMAGE_COMDAT_SELECT_EXACT_MATCH) {
-                            if (existing.checksum != comdat.CheckSum)
-                                throw Error("COMDAT EXACT_MATCH violation: symbol '" comdatName "' (checksum mismatch)")
-                            this.dbgLogInfo .= "`t[COMDAT EXACT_MATCH] Duplicate '" comdatName "' skipped.`n"
+                ;         } else if (selection == COFF.IMAGE_COMDAT_SELECT_EXACT_MATCH) {
+                ;             if (existing.checksum != comdat.CheckSum)
+                ;                 throw Error("COMDAT EXACT_MATCH violation: symbol '" comdatName "' (checksum mismatch)")
+                ;             this.dbgLogInfo .= "`t[COMDAT EXACT_MATCH] Duplicate '" comdatName "' skipped.`n"
 
-                        } else if (selection == COFF.IMAGE_COMDAT_SELECT_LARGEST) {
-                            this.dbgLogInfo .= "`t[COMDAT LARGEST] Duplicate '" comdatName "' skipped (first-wins MVP).`n" ; Упрощение: отсается первый встреченный
+                ;         } else if (selection == COFF.IMAGE_COMDAT_SELECT_LARGEST) {
+                ;             this.dbgLogInfo .= "`t[COMDAT LARGEST] Duplicate '" comdatName "' skipped (first-wins MVP).`n" ; Упрощение: отсается первый встреченный
 
-                        } else if (selection == COFF.IMAGE_COMDAT_SELECT_ASSOCIATIVE) {
-                            this.dbgLogInfo .= "`t[COMDAT ASSOCIATIVE] Duplicate '" comdatName "' skipped (first-wins MVP).`n" ; Упрощение: ассоциативные секции обрабатываем как ANY
+                ;         } else if (selection == COFF.IMAGE_COMDAT_SELECT_ASSOCIATIVE) {
+                ;             this.dbgLogInfo .= "`t[COMDAT ASSOCIATIVE] Duplicate '" comdatName "' skipped (first-wins MVP).`n" ; Упрощение: ассоциативные секции обрабатываем как ANY
 
-                        } else {
-                            this.dbgLogInfo .= "`t[COMDAT ANY] Duplicate '" comdatName "' skipped.`n" ; ANY и неизвестные значения
-                        }
+                ;         } else {
+                ;             this.dbgLogInfo .= "`t[COMDAT ANY] Duplicate '" comdatName "' skipped.`n" ; ANY и неизвестные значения
+                ;         }
 
-                        ; Пропускаем дубликат, но даём виртуальную запись в layout, чтобы релокации из этой секции резолвились на оригинал
-                        localToGlobalOffsets[i] := existing.offset
-                        layout.Push({CoffObj: coffObj, Section: sec, OriginalIndex: i, NewOffset: existing.offset, IsComdatDup: true})
-                        continue
-                    }
-                }
+                ;         ; Пропускаем дубликат, но даём виртуальную запись в layout, чтобы релокации из этой секции резолвились на оригинал
+                ;         localToGlobalOffsets[i] := existing.offset
+                ;         layout.Push({CoffObj: coffObj, Section: sec, OriginalIndex: i, NewOffset: existing.offset, IsComdatDup: true})
+                ;         continue
+                ;     }
+                ; }
 
                 ; --- Обычное добавление секции ---
                 alignVal      := coffObj.alignment[i]
