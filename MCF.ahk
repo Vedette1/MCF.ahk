@@ -438,7 +438,7 @@ class COFF {
 
 
     ReadComdatInfo() {
-        this.comdatSections := Map() ; key = SectionIndex (1-based), value = объект с COMDAT-данными из aux-записи
+        this.comdatSections := Map()
         for symIdx, symbol in this.symbolsMap {
             if (symbol.StorageClass == 3 && symbol.NumberOfAuxSymbols > 0 && symbol.SectionIndex > 0) {
                 secIdx := symbol.SectionIndex
@@ -447,7 +447,17 @@ class COFF {
                 if !(this.sections[secIdx].Characteristics & COFF.IMAGE_SECTION_HEADER_CHARACTERISTICS.Get("IMAGE_SCN_LNK_COMDAT"))
                     continue
 
-                auxOffset := this.POINTER_TO_SYMBOL_TABLE + ((symIdx + 1) * COFF.SIZEOF_IMAGE_SYMBOL) ; Aux-запись лежит сразу после основного символа в таблице символов
+                auxOffset := this.POINTER_TO_SYMBOL_TABLE + ((symIdx + 1) * COFF.SIZEOF_IMAGE_SYMBOL)
+                
+                ; Ищем настоящее имя COMDAT - ключом является имя EXTERNAL символа, указывающего на эту секцию.
+                realComdatName := symbol.Name 
+                for _, extSym in this.symbolsMap {
+                    if (extSym.SectionIndex == secIdx && extSym.StorageClass == 2) {
+                        realComdatName := extSym.Name
+                        break
+                    }
+                }
+
                 this.comdatSections[secIdx] := {
                     Length:       NumGet(this.ptr, auxOffset + 0,  "UInt"),
                     NumRelocs:    NumGet(this.ptr, auxOffset + 4,  "UShort"),
@@ -455,7 +465,7 @@ class COFF {
                     CheckSum:     NumGet(this.ptr, auxOffset + 8,  "UInt"),
                     AssocSection: NumGet(this.ptr, auxOffset + 12, "UShort"),
                     Selection:    NumGet(this.ptr, auxOffset + 14, "UChar"),
-                    SymbolName:   symbol.Name
+                    SymbolName:   realComdatName ; найденное имя функции, а не секции (.text$mn например)
                 }
             }
         }
@@ -569,11 +579,11 @@ class COFF {
 
         ; 1: Рекурсивно извлекаем и парсим все нужные .obj файлы
         while objQueue.Length > 0 {
-            currentObjWrapper := objQueue.RemoveAt(1)
-            coffObj := currentObjWrapper.coff
-            this.dbgLogInfo .= "`n[Obj] Processing object: " currentObjWrapper.originKey "`n"
-
+            currentObjWrapper    := objQueue.RemoveAt(1)
+            coffObj              := currentObjWrapper.coff
+            this.dbgLogInfo      .= "`n[Obj] Processing object: " currentObjWrapper.originKey "`n"
             localToGlobalOffsets := Map()
+            discardedSections    := Map() ; отброшенные секции COMDAT
 
             ; Лейаут секций текущего объекта (с сортировкой $-групп и COMDAT-логикой)
             sortedIndices := coffObj.GetSortedSectionIndices()
@@ -586,43 +596,38 @@ class COFF {
                 }
 
                 ; --- COMDAT-обработка ---
-                ; if (coffObj.comdatSections.Has(i)) {
-                ;     comdat     := coffObj.comdatSections[i]
-                ;     comdatName := comdat.SymbolName
-                ;     selection  := comdat.Selection
+                if (coffObj.comdatSections.Has(i)) {
+                    comdat     := coffObj.comdatSections[i]
+                    comdatName := comdat.SymbolName
+                    selection  := comdat.Selection
 
-                ;     if (comdatRegistry.Has(comdatName)) {
-                ;         existing := comdatRegistry[comdatName]
+                    if (comdatRegistry.Has(comdatName)) {
+                        existing := comdatRegistry[comdatName]
 
-                ;         if (selection == COFF.IMAGE_COMDAT_SELECT_NODUPLICATES) {
-                ;             _ := 1 ; заглушка, ибо IMAGE_COMDAT_SELECT_NODUPLICATES работает криво с MSVC. Насколько я понял ошубки тригерят одноименные секции, а не символы.
-                ;             ; throw Error("COMDAT NODUPLICATES violation: symbol '" comdatName "' in '" coffObj.obj "'")
-                ;         } else if (selection == COFF.IMAGE_COMDAT_SELECT_SAME_SIZE) {
-                ;             if (existing.size != secSize)
-                ;                 throw Error("COMDAT SAME_SIZE violation: symbol '" comdatName "' (" existing.size " vs " secSize ")")
-                ;             this.dbgLogInfo .= "`t[COMDAT SAME_SIZE] Duplicate '" comdatName "' skipped.`n"
+                        if (selection == COFF.IMAGE_COMDAT_SELECT_NODUPLICATES) {
+                            throw Error("COMDAT NODUPLICATES violation: symbol '" comdatName "' in '" coffObj.obj "'")
+                        } else if (selection == COFF.IMAGE_COMDAT_SELECT_SAME_SIZE) {
+                            if (existing.size != secSize)
+                                throw Error("COMDAT SAME_SIZE violation: symbol '" comdatName "' (" existing.size " vs " secSize ")")
+                            this.dbgLogInfo .= "`t[COMDAT SAME_SIZE] Duplicate '" comdatName "' skipped.`n"
+                        } else if (selection == COFF.IMAGE_COMDAT_SELECT_EXACT_MATCH) {
+                            if (existing.checksum != comdat.CheckSum)
+                                throw Error("COMDAT EXACT_MATCH violation: symbol '" comdatName "' (checksum mismatch)")
+                            this.dbgLogInfo .= "`t[COMDAT EXACT_MATCH] Duplicate '" comdatName "' skipped.`n"
+                        } else if (selection == COFF.IMAGE_COMDAT_SELECT_LARGEST) {
+                            this.dbgLogInfo .= "`t[COMDAT LARGEST] Duplicate '" comdatName "' skipped (first-wins MVP).`n"
+                        } else if (selection == COFF.IMAGE_COMDAT_SELECT_ASSOCIATIVE) {
+                            this.dbgLogInfo .= "`t[COMDAT ASSOCIATIVE] Duplicate '" comdatName "' skipped.`n"
+                        } else {
+                            this.dbgLogInfo .= "`t[COMDAT ANY] Duplicate '" comdatName "' skipped.`n"
+                        }
 
-                ;         } else if (selection == COFF.IMAGE_COMDAT_SELECT_EXACT_MATCH) {
-                ;             if (existing.checksum != comdat.CheckSum)
-                ;                 throw Error("COMDAT EXACT_MATCH violation: symbol '" comdatName "' (checksum mismatch)")
-                ;             this.dbgLogInfo .= "`t[COMDAT EXACT_MATCH] Duplicate '" comdatName "' skipped.`n"
-
-                ;         } else if (selection == COFF.IMAGE_COMDAT_SELECT_LARGEST) {
-                ;             this.dbgLogInfo .= "`t[COMDAT LARGEST] Duplicate '" comdatName "' skipped (first-wins MVP).`n" ; Упрощение: отсается первый встреченный
-
-                ;         } else if (selection == COFF.IMAGE_COMDAT_SELECT_ASSOCIATIVE) {
-                ;             this.dbgLogInfo .= "`t[COMDAT ASSOCIATIVE] Duplicate '" comdatName "' skipped (first-wins MVP).`n" ; Упрощение: ассоциативные секции обрабатываем как ANY
-
-                ;         } else {
-                ;             this.dbgLogInfo .= "`t[COMDAT ANY] Duplicate '" comdatName "' skipped.`n" ; ANY и неизвестные значения
-                ;         }
-
-                ;         ; Пропускаем дубликат, но даём виртуальную запись в layout, чтобы релокации из этой секции резолвились на оригинал
-                ;         localToGlobalOffsets[i] := existing.offset
-                ;         layout.Push({CoffObj: coffObj, Section: sec, OriginalIndex: i, NewOffset: existing.offset, IsComdatDup: true})
-                ;         continue
-                ;     }
-                ; }
+                        localToGlobalOffsets[i] := existing.offset
+                        discardedSections[i]    := true ; помечается как удаленная
+                        layout.Push({CoffObj: coffObj, Section: sec, OriginalIndex: i, NewOffset: existing.offset, IsComdatDup: true})
+                        continue
+                    }
+                }
 
                 ; --- Обычное добавление секции ---
                 alignVal      := coffObj.alignment[i]
@@ -657,7 +662,7 @@ class COFF {
 
             ; Сбор релокаций
             for i, sec in coffObj.sections {
-                if (coffObj.sectionFilter[i])
+                if (coffObj.sectionFilter[i] || discardedSections.Has(i))
                     continue
 
                 loop (sec.NumberOfRelocations) {
