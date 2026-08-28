@@ -676,7 +676,6 @@ class COFF {
                         origName    := symbol.Name
                         cleanName   := origName
                         isImport    := false
-                        substituted := false
                         
                         if (this.is64) {
                             if (origName ~= "^__imp_") {
@@ -700,13 +699,11 @@ class COFF {
                         if (this.dynamicSubstitution.Has(cleanName)) {
                             cleanName   := this.dynamicSubstitution[cleanName]
                             isImport    := true
-                            substituted := true
                         } else if (this.staticSubstitution.Has(cleanName)) {
                             cleanName   := this.staticSubstitution[cleanName]
                             isImport    := false
-                            substituted := true
                         }
-                        pendingExternalRefs.Push({func: cleanName, orig: origName, type: reloc.Type, patchOffset: absPatchOffset, isImport: isImport, substituted: substituted}) ; чистое имя (func) и оригинальное (orig)
+                        pendingExternalRefs.Push({func: cleanName, orig: origName, type: reloc.Type, patchOffset: absPatchOffset, isImport: isImport}) ; чистое имя (func) и оригинальное (orig)
                     } else if (symbol.StorageClass == 105) { ; --- WEAK EXTERNAL ---
                         weakInfo    := coffObj.weakExternals.Has(symbolIndex) ? coffObj.weakExternals[symbolIndex] : {TagIndex: 0, Characteristics: 1}
                         fallbackSym := (weakInfo.TagIndex > 0 && coffObj.symbolsMap.Has(weakInfo.TagIndex)) ? coffObj.symbolsMap[weakInfo.TagIndex] : ""
@@ -773,7 +770,7 @@ class COFF {
             ; Поиск неразрешенных символов в статических библиотеках
             if (this.staticLibraries.Length > 0) {
                 for ref in pendingExternalRefs {
-                if (ref.substituted) ; Подменённые символы НЕ ищем в статических библиотеках
+                if (ref.isImport) ; Подменённые символы НЕ ищем в статических библиотеках
                     continue
 
                 if (ref.HasProp("isWeak") && ref.isWeak && ref.weakSearch == 1)
@@ -862,7 +859,7 @@ class COFF {
 
         for ref in pendingExternalRefs {
             symToFind := ref.orig
-            if (!ref.substituted && globalSymbolOffsets.Has(symToFind)) {
+            if (!ref.isImport && globalSymbolOffsets.Has(symToFind)) {
                 this.ApplyRelocation(mcode, globalSymbolOffsets[symToFind], ref.patchOffset, ref.type) ; патчим как обычно
             } else if (ref.HasProp("isWeak") && ref.isWeak) {
                 ; --- WEAK EXTERNAL: символ не найден ---
