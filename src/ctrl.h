@@ -26,12 +26,27 @@ struct ButtonConfig {
         COLORREF HOT;
     };
 
-    COLORREF backgroundСolor;
+    COLORREF backgroundColor;
     COLORREF textColor;
     COLORREF borderColor;
     int borderWidth;
     HoverEffect hover;
     int ddlMode;
+};
+
+struct CheckBoxConfig {
+    struct HoverEffect {
+        COLORREF DISABLED;
+        COLORREF SELECTED;
+        COLORREF HOT;
+    };
+
+    COLORREF backgroundColor;
+    COLORREF borderColor;
+    COLORREF squareColor;
+    COLORREF activeTextColor;
+    COLORREF inactiveTextColor;
+    HoverEffect hover;
 };
 
 struct ListViewConfig {
