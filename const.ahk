@@ -51,7 +51,7 @@
 
     static GLOBAL_MCF_LINKER_LOG     => this.GLOBAL_WORKING_DIR "\MCF_Linker_log.log"
     static GLOBAL_LAST_CODE          => this.GLOBAL_WORKING_DIR "\LastCode.cpp"
-    static GLOBAL_MCF_VERSION        => "1.0.6"
+    static GLOBAL_MCF_VERSION        => "1.0.7"
     static GLOBAL_AHK_VERSION        => "AutoHotkey_H 2.1-alpha.18"
 
     static GLOBAL_TEMP_CPP           => this.GLOBAL_WORKING_DIR "\temp.cpp"
@@ -59,6 +59,8 @@
     static GLOBAL_TEMP_ASM           => this.GLOBAL_WORKING_DIR "\temp.asm"
     static GLOBAL_TEMP_OBJ           => this.GLOBAL_WORKING_DIR "\temp.o"
     static GLOBAL_TEMP_COMPILER_LOG  => this.GLOBAL_WORKING_DIR "\Compiler_Error.log"
+
+    static GLOBAL_CACHE              => this.GLOBAL_WORKING_CACHE_DIR "\cache.tsv"
 }
 
 
