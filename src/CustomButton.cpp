@@ -128,11 +128,11 @@ typedef struct {
     float pos, from, target;
     DWORD t0;
     BOOL  animating;
-    BOOL  hot;      // свой хот-трекинг (тему-то срезали)
+    BOOL  hot;      // свой хот-трекинг
     BOOL  pressed;  // своя фиксация нажатия
 } ToggleAnim;
 
-// POD-массив: нулевая инициализация, никакой работы при старте процесса
+
 static ToggleAnim g_anims[32];
 static int        g_animCount = 0;
 
@@ -196,96 +196,6 @@ static COLORREF MixColor(COLORREF a, COLORREF b, float t) {
                (int)(GetBValue(a) + (GetBValue(b) - GetBValue(a)) * t + 0.5f));
 }
 
-// ========================= отрисовка =========================
-
-// LRESULT CALLBACK CheckBoxProc(HWND hwnd, LPARAM lParam, CheckBoxConfig* config) {
-//     NMCUSTOMDRAW* pcd = (NMCUSTOMDRAW*)lParam;
-//     if (pcd->dwDrawStage != CDDS_PREPAINT)
-//         return CDRF_DODEFAULT;
-
-//     int width  = pcd->rc.right - pcd->rc.left;
-//     int height = pcd->rc.bottom - pcd->rc.top;
-//     if (width <= 0 || height <= 0)
-//         return CDRF_SKIPDEFAULT;
-
-//     // ---- буфер: весь кадр собирается здесь ----
-//     HDC     hdc   = CreateCompatibleDC(pcd->hdc);
-//     HBITMAP bm    = CreateCompatibleBitmap(pcd->hdc, width, height);
-//     HGDIOBJ oldBM = SelectObject(hdc, bm);
-//     RECT rc = { 0, 0, width, height };
-//     int  pad = 3;
-
-//     ToggleAnim* a = Toggle_Anim(hwnd);
-//     float pos = a ? a->pos
-//                   : (SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED ? 1.0f : 0.0f);
-
-//     bool disabled = (pcd->uItemState & CDIS_DISABLED) != 0;
-//     bool hot      = (pcd->uItemState & CDIS_HOT) != 0 || (a && a->hot); // ручной флаг надёжен
-//     bool pressed  = a && a->pressed; // CDIS_SELECTED не юзаем
-
-//     COLORREF track = config->backgroundColor;
-//     if      (disabled) track = BrightenColor(track, -20);
-//     else if (pressed)  track = BrightenColor(track, -20);
-//     else if (hot)      track = BrightenColor(track, 5);
-
-//     COLORREF accent = config->squareColor;
-//     if      (disabled) accent = config->hover.DISABLED != -1 ? config->hover.DISABLED : BrightenColor(accent, -20);
-//     else if (pressed)  accent = config->hover.SELECTED != -1 ? config->hover.SELECTED : BrightenColor(accent, -10);
-//     else if (hot)      accent = config->hover.HOT      != -1 ? config->hover.HOT      : BrightenColor(accent, 12);
-
-//     SetDCBrushColor(hdc, track);
-//     FillRect(hdc, &rc, (HBRUSH)GetStockObject(DC_BRUSH));
-
-//     int knobW = width / 2 - pad * 2;
-//     int kx = (int)(pad + (float)(width - pad * 2 - knobW) * pos + 0.5f);
-//     RECT rcKnob = { kx, pad, kx + knobW, height - pad };
-//     SetDCBrushColor(hdc, accent);
-//     FillRect(hdc, &rcKnob, (HBRUSH)GetStockObject(DC_BRUSH));
-
-//     if (config->borderColor != -1) {
-//         HPEN hPen = CreatePen(PS_SOLID, 3, config->borderColor);
-//         HGDIOBJ oldPen = SelectObject(hdc, hPen);
-//         SelectObject(hdc, GetStockObject(NULL_BRUSH));
-//         Rectangle(hdc, 0, 0, width, height);
-//         SelectObject(hdc, oldPen);
-//         DeleteObject(hPen);
-//     }
-
-//     wchar_t buf[128] = { 0 };
-//     GetWindowTextW(hwnd, buf, 128);
-//     const wchar_t* leftText  = buf;
-//     const wchar_t* rightText = NULL;
-//     const wchar_t* sep = FindChar(buf, L'|');
-//     if (sep) { buf[sep - buf] = L'\0'; rightText = sep + 1; }
-
-//     HFONT hFont = (HFONT)SendMessageW(hwnd, WM_GETFONT, 0, 0);
-//     HGDIOBJ oldFont = SelectObject(hdc, hFont ? hFont : GetStockObject(DEFAULT_GUI_FONT));
-//     SetBkMode(hdc, TRANSPARENT);
-
-//     COLORREF textOn  = config->activeTextColor;
-//     COLORREF textOff = config->inactiveTextColor;
-//     if (disabled) { textOn = MixColor(track, textOn, 0.45f); textOff = MixColor(track, textOff, 0.45f); }
-
-//     RECT rcL = { 0, 0, width / 2, height };
-//     SetTextColor(hdc, MixColor(textOff, textOn, 1.0f - pos));
-//     DrawTextW(hdc, leftText, -1, &rcL, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-//     if (rightText) {
-//         RECT rcR = { width / 2, 0, width, height };
-//         SetTextColor(hdc, MixColor(textOff, textOn, pos));
-//         DrawTextW(hdc, rightText, -1, &rcR, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-//     }
-//     SelectObject(hdc, oldFont);
-
-//     // ---- атомарный вывод: единственная операция, которая трогает экран ----
-//     BitBlt(pcd->hdc, pcd->rc.left, pcd->rc.top, width, height, hdc, 0, 0, SRCCOPY);
-
-//     SelectObject(hdc, oldBM);
-//     DeleteObject(bm);
-//     DeleteDC(hdc);
-//     return CDRF_SKIPDEFAULT;
-// }
-
 
 LRESULT CALLBACK ToggleSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
     ToggleAnim* a = Toggle_Anim(hwnd);
@@ -333,7 +243,7 @@ LRESULT CALLBACK ToggleSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 FillRect(hdcMem, &rcClient, (HBRUSH)GetStockObject(DC_BRUSH));
 
                 // Отрисовка ползунка
-                int knobW = width / 2 - pad * 2;
+                int knobW = (width - 2 * pad) / 2;
                 int kx = (int)(pad + (float)(width - pad * 2 - knobW) * pos + 0.5f);
                 RECT rcKnob = { kx, pad, kx + knobW, height - pad };
                 SetDCBrushColor(hdcMem, accent);
