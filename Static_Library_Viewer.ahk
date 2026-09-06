@@ -1,5 +1,6 @@
 ﻿#Requires AutoHotkey v2.0
 #SingleInstance Force
+#Include const.ahk
 
 class StaticLibraryParser {
     static IMAGE_ARCHIVE_START := "!<arch>`n"
@@ -219,7 +220,7 @@ class StaticLibraryParser {
                     nestedParser := StaticLibraryParser({Ptr: this.ptr.Ptr + dataOffset, Size: hdr.Size, ArchiveDir: this.ArchiveDir})
                 }
 
-                memberInfo := {Name: this.ResolveName(hdr.Name), DataOffset: dataOffset, Size: hdr.Size, NestedParser: nestedParser}
+                memberInfo := {Name: this.ResolveName(hdr.Name), DataOffset: dataOffset, Size: hdr.Size, NestedParser: nestedParser, Arch: this._GetAtch(this.ptr.Ptr + dataOffset)}
                 this.Members.Push(memberInfo)
                 this.MembersByOffset[offset] := memberInfo
 
@@ -239,7 +240,8 @@ class StaticLibraryParser {
                     DataOffset: objInfo.HasProp("DataOffset") ? objInfo.DataOffset : 0,
                     Size:       objInfo.Size,
                     IsThin:     objInfo.HasProp("IsThin") ? objInfo.IsThin : false,
-                    Path:       objInfo.HasProp("Path") ? objInfo.Path : ""
+                    Path:       objInfo.HasProp("Path") ? objInfo.Path : "",
+                    Arch:       objInfo.HasProp("Arch") ? objInfo.Arch : 0
                 }
             } else {
                 this.ResolvedSymbols[symName] := {ObjFile: "UNKNOWN", DataOffset: 0, Size: 0, IsThin: false, Path: ""}
@@ -378,6 +380,16 @@ class StaticLibraryParser {
         return ""
     }
 
+    _GetAtch(dataPtr) {
+        static IMAGE_FILE_MACHINE_AMD64 := 0x8664 ; x64
+        static IMAGE_FILE_MACHINE_I386  := 0x14c  ; x86
+        switch (NumGet(dataPtr, "UShort")) {
+            case IMAGE_FILE_MACHINE_AMD64 : return "x64"
+            case IMAGE_FILE_MACHINE_I386  : return "x86"
+            default                       : return "XXX"
+        }
+    }
+
     SwapEndian(n) => ((n & 0xFF) << 24) | ((n & 0xFF00) << 8) | ((n >> 8) & 0xFF00) | ((n >> 24) & 0xFF)
 }
 
@@ -430,7 +442,7 @@ class MultiMap extends Map {
  * @param {Integer} findAll - Если false, поиск остановится, когда будет найдено хотя бы одно совпадение для каждого символа из массива. Если true — переберет все файлы целиком.
  * @returns {Array} - Массив объектов.
  */
-FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll := false, recurse := false) {
+FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll := false, recurse := false, useCache := true) {
     results := []
     targetSymbols := Map()
     
@@ -438,12 +450,53 @@ FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll := false, recurse :=
         targetSymbols[sym] := true
     }
 
+    if (useCache) {
+        try {
+            if (!FileExist(Const.GLOBAL_CACHE)) {
+                throw Error("The cache file is corrupted or has not been created at all. Create the cache first.")
+            }
+
+            Loop Read Const.GLOBAL_CACHE {
+                if A_Index == 1
+                    continue
+                
+                tabPos := InStr(A_LoopReadLine, "`t")
+                if (!tabPos)
+                    continue
+                    
+                symName := SubStr(A_LoopReadLine, 1, tabPos - 1)
+                if targetSymbols.Has(symName) {
+                    parts := StrSplit(A_LoopReadLine, "`t")
+                    
+                    results.Push({
+                        Symbol:      parts[1],
+                        ArchivePath: parts[2],
+                        ObjFile:     parts[3],
+                        Arch:        parts[4],
+                        DataOffset:  Integer(parts[5]),
+                        Size:        Integer(parts[6]),
+                        IsThin:      Integer(parts[7])
+                    })
+
+                    if (!findAll) {
+                        targetSymbols.Delete(symName)
+                        if (targetSymbols.Count == 0)
+                            return results
+                    }
+                }
+            }
+            return results
+        } catch as er {
+            throw Error("Something is wrong with the cache file: " Const.GLOBAL_CACHE ". Try creating the cache again, or report the problem.")
+        }
+    }
+
     ParseArchive(filePath, findAll) {
         try {
             SLP := StaticLibraryParser(filePath)
             for symName, info in SLP.ResolvedSymbols {
                 if targetSymbols.Has(symName) {
-                    results.Push({Symbol: symName, ObjFile: info.ObjFile, DataOffset: info.DataOffset, Size: info.Size, IsThin: info.IsThin, ArchivePath: filePath})
+                    results.Push({Symbol: symName, ObjFile: info.ObjFile, DataOffset: info.DataOffset, Size: info.Size, IsThin: info.IsThin, Arch: info.Arch, ArchivePath: filePath})
                     if (!findAll) {
                         targetSymbols.Delete(symName)
                         if (targetSymbols.Count == 0)
@@ -488,6 +541,48 @@ FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll := false, recurse :=
 }
 
 
+BuildStaticLibCache(pathsToSearch, recurse := false) {
+    fileObj := FileOpen(Const.GLOBAL_CACHE, "w", "UTF-8")
+    fileObj.WriteLine("Symbol`tArchivePath`tObjFile`tArch`tDataOffset`tSize`tIsThin")
+
+    GetExtension(path) {
+        SplitPath(path,,, &ext)
+        return ext
+    }
+
+    ParseAndWrite(filePath) {
+        try {
+            SLP := StaticLibraryParser(filePath)
+            for symName, info in SLP.ResolvedSymbols {
+                ; Формат: Имя_символа Путь_к_архиву Obj_файл Архитектура Смещение Размер Тонкий
+                line := symName "`t" filePath "`t" info.ObjFile "`t" info.Arch "`t" info.DataOffset "`t" info.Size "`t" info.IsThin
+                fileObj.WriteLine(line)
+            }
+        } catch as er {
+            throw Error("Cache Build Error in " filePath ": " er.Message)
+        }
+    }
+
+    for currentPath in pathsToSearch {
+        attr := FileExist(currentPath)
+        if (!attr)
+            continue
+            
+        if InStr(attr, "D") {
+            Loop Files, currentPath "\*.*", recurse ? "FR" : "F" {
+                ext := A_LoopFileExt
+                if (ext = "a" || ext = "lib")
+                    ParseAndWrite(A_LoopFileFullPath)
+            }
+        } else {
+            ext := GetExtension(currentPath)
+            if (ext = "a" || ext = "lib")
+                ParseAndWrite(currentPath)
+        }
+    }
+
+    fileObj.Close()
+}
 
 
 /*
