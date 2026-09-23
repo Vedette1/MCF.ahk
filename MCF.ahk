@@ -3,6 +3,7 @@
 #Include const.ahk
 #Include Static_Library_Viewer.ahk
 #Include Lib\Demangle.ahk
+#Include Lib\PEExportParser.ahk
 
 class Binary {
     static BinaryToStrin(bin, len, flag) {
@@ -282,7 +283,7 @@ class COFF {
      * - Если `dynamicLinking := false`, то класс не будет пытаться патчить asm инструкции. То есть, если компилятор подразумевает статическую линковку для определенного символа, то он будет статически слинкован.
      * @param {Array} staticLibraries - Массив экземпляров класса StaticLibraryParser для статической линковки.
      */
-    __New(obj, importDll := ["User32", "msvcrt", "Kernel32"], ignoreSections := [".pdata", ".xdata", ".rdata$zzz"], fullOffsetTable := true, entryPoint := 0x0, dynamicLinking := true, staticLibraries := [], dynamicSubstitution := Map(), staticSubstitution := Map(), demangleLvl := 1) {
+    __New(obj, importDll := ["User32", "msvcrt", "Kernel32"], ignoreSections := [".pdata", ".xdata", ".rdata$zzz"], fullOffsetTable := true, entryPoint := 0x0, dynamicLinking := true, staticLibraries := [], dynamicSubstitution := Map(), staticSubstitution := Map(), demangleLvl := 1, useOrdinals := true, usePEParser := false) {
         this.obj                 := obj                 ; Путь до COFF (.o / .obj) файла.
         this.importDll           := importDll           ; Массив dll которые используются в конечном Mcode (если есть внешнии символы).
         this.ignoreSections      := ignoreSections      ; Массив секций, которые будут игнорироватся при линковке (в основном сюда ничего не нужно дописывать).
@@ -293,6 +294,8 @@ class COFF {
         this.dynamicSubstitution := dynamicSubstitution ; Подмена динамических символов.
         this.staticSubstitution  := staticSubstitution  ; Подмена статических символов.
         this.demangleLvl         := demangleLvl         ; Деманглирование символов в таблице смещений. Работает только с GCC / Clang. MSVC не поддерживается.
+        this.useOrdinals         := useOrdinals         ; В мини IAT будут записываться ординалы функций (порядковый номер), а не их именна. Это экономит место, а так же делает Mcode более сложночитаемым.
+        this.usePEParser         := usePEParser         ; Если `false` используется LoadLibrary + GetProcAddress для поиска символов в dll для IAT, в ином случае dll не загружаются в память, а читаются файлы.
         this.dbgLogInfo          := ""
 
         this.imports           := []  ; Массив объектов импортируемых символов из dll (__imp_).
@@ -895,24 +898,54 @@ class COFF {
         ;============================================ кастомный мини IAT + VA reloc ============================================
         this.dbgLogInfo .= "`n[IAT] Generating Import Address Table (IAT):`n"
         loadedDlls := Map()
-        for dll in this.importDll {
-            if (hMod := DllCall("LoadLibrary", "Str", dll, "Ptr")) {
-                loadedDlls[dll] := hMod
-                this.dbgLogInfo .= "`tLoaded DLL: '" dll "'`n"
-            } else {
-                this.dbgLogInfo .= "`t[Warning] Failed to load DLL: '" dll "'`n"
+
+        if (this.usePEParser) {
+            for dll in this.importDll {
+                try {
+                    dllExports := PEExportParser(dll, this.is64)
+                    loadedDlls[dll] := dllExports.Exports
+                    this.dbgLogInfo .= "`tLoaded DLL (Parsed): '" dllExports.DllPath "'`n"
+                } catch as er {
+                    throw Error(er.Message)
+                }
+            }
+        } else {
+            for dll in this.importDll {
+                if (hMod := DllCall("LoadLibrary", "Str", dll, "Ptr")) {
+                    loadedDlls[dll] := hMod
+                    this.dbgLogInfo .= "`tLoaded DLL (LoadLibrary): '" dll "'`n"
+                } else {
+                    this.dbgLogInfo .= "`t[Warning] Failed to load DLL: '" dll "'`n"
+                }
             }
         }
 
+        ; Я так и не понял есть ли вообще смысл использовать PE парсер для поиска символов, ведь по сути их имена не отличаются у разных архитектур (и одноименных dll)...
+        ; Как будто LoadLibrary + GetProcAddress работает отлично как для x86 так и для x64...
+        ; В общем пусть будет два варианта, ибо я так и не понял что лучше оставить.
+        ; PE парсер работает криво, то есть в 10-20% нужно указывать абсалютный путь к нужной dll - это не удобно, но не критично.
         ResolveAndAdd(exp, writeIAT := true) {
             disp := this.is32 ? 4 : exp.type
-            for dll, hMod in loadedDlls {
-                if (DllCall("GetProcAddress", "Ptr", hMod, "AStr", exp.func, "Ptr")) {
-                    if (writeIAT) {
-                        IAT .= dll ":" exp.func ":" exp.patchOffset ":" disp "|"
+            for dll in this.importDll {
+                if (this.usePEParser) {
+                    dllExport := loadedDlls[dll]
+                    if (dllExport.Has(exp.func)) {
+                        if (writeIAT) {
+                            exportFunc := this.useOrdinals ? dllExport[exp.func].Ordinal : exp.func
+                            IAT .= dll ":" exportFunc ":" exp.patchOffset ":" disp "|"
+                        }
+                        this.dbgLogInfo .= "`t[OK] Symbol '" exp.func " [" dllExport[exp.func].Ordinal "]' found in " dll ". Added to IAT.`n"
+                        return true
                     }
-                    this.dbgLogInfo .= "`t[OK] Symbol '" exp.func "' found in " dll ". Added to IAT.`n"
-                    return true
+                } else {
+                    hMod := loadedDlls[dll]
+                    if (DllCall("GetProcAddress", "Ptr", hMod, "AStr", exp.func, "Ptr")) {
+                        if (writeIAT) {
+                            IAT .= dll ":" exp.func ":" exp.patchOffset ":" disp "|"
+                        }
+                        this.dbgLogInfo .= "`t[OK] Symbol '" exp.func "' found in " dll ". Added to IAT.`n"
+                        return true
+                    }
                 }
             }
             if (writeIAT) {

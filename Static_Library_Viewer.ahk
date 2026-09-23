@@ -445,6 +445,10 @@ class MultiMap extends Map {
 FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll := false, recurse := false, useCache := true) {
     results := []
     targetSymbols := Map()
+
+    if (symbolsToFind.Length == 0) {
+        throw Error("No search symbols were provided.")
+    }
     
     for _, sym in symbolsToFind {
         targetSymbols[sym] := true
@@ -514,6 +518,10 @@ FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll := false, recurse :=
         return ext
     }
 
+    if (pathsToSearch.Length == 0) {
+        throw Error("No search paths specified. Specify them, or use the cache if available.")
+    }
+
     for currentPath in pathsToSearch {
         attr := FileExist(currentPath)
         if (!attr)
@@ -537,11 +545,20 @@ FindSymbolsInArchives(symbolsToFind, pathsToSearch, findAll := false, recurse :=
             }
         }
     }
+
+    if (results.Length == 0) {
+        throw Error("Search completed! Unfortunately, no symbols were found...")
+    }
+
     return results
 }
 
 
 BuildStaticLibCache(pathsToSearch, recurse := false) {
+    if (pathsToSearch.Length == 0) {
+        throw Error("You did not specify the paths.")
+    }
+
     fileObj := FileOpen(Const.GLOBAL_CACHE, "w", "UTF-8")
     fileObj.WriteLine("Symbol`tArchivePath`tObjFile`tArch`tDataOffset`tSize`tIsThin")
 
