@@ -2,11 +2,13 @@
     static __GLOBAL_WORKING_DIR       := ""
     static __GLOBAL_INI_FILE          := ""
     static __GLOBAL_WORKING_CACHE_DIR := ""
+    static __GLOBAL_OBJ_DIR           := ""
 
     static __New() {
         this.GLOBAL_WORKING_DIR       := RegRead("HKCU\Software\MCF", "TEMP_DIR",          A_Temp "\MCODE")
         this.GLOBAL_INI_FILE          := RegRead("HKCU\Software\MCF", "TEMP_SETTINGS_INI", this.GLOBAL_WORKING_DIR "\settings.ini")
         this.GLOBAL_WORKING_CACHE_DIR := RegRead("HKCU\Software\MCF", "TEMP_CACHE",        this.GLOBAL_WORKING_DIR "\Cache")
+        this.GLOBAL_OBJ_DIR           := RegRead("HKCU\Software\MCF", "TEMP_MY_OBJ",       this.GLOBAL_WORKING_DIR "\MyObj")
     }
 
     static GLOBAL_WORKING_DIR {
@@ -18,6 +20,7 @@
             this.__GLOBAL_WORKING_DIR     := Value
             this.GLOBAL_INI_FILE          := Value "\settings.ini"
             this.GLOBAL_WORKING_CACHE_DIR := Value "\Cache"
+            this.GLOBAL_OBJ_DIR           := Value "\MyObj"
         }
     }
 
@@ -46,6 +49,16 @@
                 DirCreate(Value)
             }
             this.__GLOBAL_WORKING_CACHE_DIR := Value
+        }
+    }
+
+    static GLOBAL_OBJ_DIR {
+        get => this.__GLOBAL_OBJ_DIR
+        set {
+            if !(DirExist(Value)) {
+                DirCreate(Value)
+            }
+            this.__GLOBAL_OBJ_DIR := Value
         }
     }
 
@@ -94,7 +107,7 @@ GetMcodePtr(x64 := "", x86 := "") {
             continue
         }
         
-        pFunc := DllCall("GetProcAddress", "Ptr", DllCall("LoadLibrary", "Str", item[1], "Ptr"), "AStr", item[2], "Ptr")
+        pFunc := DllCall("GetProcAddress", "Ptr", DllCall("LoadLibrary", "Str", item[1], "Ptr"), IsInteger(item[2]) ? "Ptr" : "AStr", item[2], "Ptr")
         patchOffset := Integer(item[3]), disp := Integer(item[4])
         pEntry := ptr + sz + iatOffset
 
