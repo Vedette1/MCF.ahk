@@ -1,5 +1,5 @@
 ﻿#Requires AutoHotkey v2.0
-#Include ../MCF.ahk
+#SingleInstance Force
 
 class MCF_MCODE {
     static __New() {
@@ -754,7 +754,26 @@ class MCF_MCODE {
         ZXJybm/VBoADdG9yBxJzCAdeEKs3YfB0ZXhpJyKqWCsFbgP/aScLYy0DHwAfAB8AHwAfAP8fAB8AHwAfAB8AHwAfAB8APx8AHwAfAB8AHwABAA==
         )"
 
-        ptr := GetMcodePtr(x64, x86)
+        GetShellCodePtr(x64 := "", x86 := "") {
+            p := A_PtrSize, code := RegExReplace(p=8 ? x64 : x86, "\s+")
+            if ((SubStr(code, 1, 1) == "$")) {
+                oSize  := Integer("0x" SubStr(code, 2, 6))
+                cmpFmt := Integer(SubStr(code, 8, 1))
+                code   := SubStr(code, 9)
+                DllCall("Crypt32\CryptStringToBinary", "Str", code, "UInt", 0, "UInt", 1, "Ptr", 0, "UInt*", &size := 0, "Ptr", 0, "Ptr", 0)
+                DllCall("Crypt32\CryptStringToBinary", "Str", code, "UInt", 0, "UInt", 1, "Ptr", cbuf := Buffer(size), "UInt*", size, "Ptr", 0, "Ptr", 0)
+                DllCall("ntdll\RtlDecompressBuffer", "UShort", cmpFmt, "Ptr", ubuf := Buffer(oSize), "UInt", oSize, "Ptr", cbuf, "UInt", size, "UInt*", &sz := 0, "UInt")
+                ptr := DllCall("VirtualAlloc", "Ptr", 0, "Ptr", sz, "UInt", 0x3000, "UInt", 0x40, "Ptr")
+                DllCall("RtlMoveMemory", "Ptr", ptr, "Ptr", ubuf, "Ptr", oSize)
+            } else {
+                crypt := RegExMatch(code, "^[0-9a-fA-F]+$") ? 12 : 1
+                DllCall("Crypt32\CryptStringToBinary", "Str", code, "UInt", 0, "UInt", crypt, "Ptr", 0, "UInt*", &sz := 0, "Ptr", 0, "Ptr", 0)
+                ptr := DllCall("VirtualAlloc", "Ptr", 0, "Ptr", sz, "UInt", 0x3000, "UInt", 0x40, "Ptr")
+                DllCall("Crypt32\CryptStringToBinary", "Str", code, "UInt", 0, "UInt", crypt, "Ptr", ptr, "UInt*", sz, "Ptr", 0, "Ptr", 0)
+            } return ptr
+        }
+
+        ptr := GetShellCodePtr(x64, x86)
         DllCall(ptr + 0x40, "Int") ; stub init
         offset := Map()
         offset["_Z16CustomBorderProcP6HWND__jyxyy"]            := ptr + (A_PtrSize == 8 ? 0x2920 : 0x2368) ; CustomBorderProc(HWND__*, unsigned int, unsigned long long, long long, unsigned long long, unsigned long long)
