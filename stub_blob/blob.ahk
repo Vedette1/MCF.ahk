@@ -3,7 +3,7 @@
 #Include ../MCF.ahk
 
 
-class ShellCode {
+class Blob {
     static SIZEOF_BLOB_HDR := 64
     static SIZEOF_IMP_REC  := 17
     static SIZEOF_VA_REC   := 5
@@ -49,24 +49,21 @@ class ShellCode {
     )"
 
 
-    __New(mcodeStr, arch := "x64", shellCodeBuild := true, offsetTable := "", entryPoint := "", formatC := false) {
-        this.VA_size          := arch == "x64" ? 8 : 4
-        this.shellCodeBuild   := shellCodeBuild
-        this.offsetTable      := offsetTable
+    __New(mcodeBuffer, mcodeSize, IAT_str, is64 := true, entryPoint := 0) {
+        this.mcodeBuffer      := mcodeBuffer
+        this.mcodeSize        := mcodeSize
+        this.IAT              := StrSplit(RegExReplace(SubStr(IAT_str, 2), "\s+"), "|")
+        this.VA_size          := is64 ? 8 : 4
         this.entryPoint       := entryPoint
-        this.formatC          := formatC
-
-        this.mcodeArr         := StrSplit(RegExReplace(mcodeStr, "\s+"), "|")
-        this.stubBuffer       := Binary.StringToBinary(RegExReplace(arch == "x64" ? ShellCode.stub_x64 : ShellCode.stub_x86, "\s+"), 12)
-        this.mcodeBuffer      := Binary.StringToBinary(this.mcodeArr[1], 12)
 
         this.GetData()
+        this.stubBuffer       := Binary.StringToBinary(RegExReplace(is64 ? Blob.stub_x64 : Blob.stub_x86, "\s+"), 12)
         this.importCount      := this.data.IMP.Length
         this.VACount          := this.data.VA.Length
-        this.IATSize          := this.importCount * (arch == "x64" ? 16 : 4)
-        this.imp_RVA          := this.stubBuffer.size + this.mcodeBuffer.size
-        this.VA_RVA           := this.imp_RVA + (this.importCount * ShellCode.SIZEOF_IMP_REC)
-        this.pool_RVA         := this.VA_RVA + (this.VACount * ShellCode.SIZEOF_VA_REC)
+        this.IATSize          := this.importCount * (is64 ? 16 : 4)
+        this.imp_RVA          := this.stubBuffer.size + this.mcodeSize
+        this.VA_RVA           := this.imp_RVA + (this.importCount * Blob.SIZEOF_IMP_REC)
+        this.pool_RVA         := this.VA_RVA + (this.VACount * Blob.SIZEOF_VA_REC)
         this.IAT_RVA          := this.pool_RVA + this.stringPoolSize
         this.totalSize        := this.IAT_RVA + this.IATSize
 
@@ -75,28 +72,26 @@ class ShellCode {
 
 
     Build() {
-        Table     := this.ParseOffsets()
         FinalBlob := Buffer(this.totalSize, 0)
-
         RtlMoveMemory(FinalBlob.Ptr, this.stubBuffer.Ptr, this.stubBuffer.size)
         NumPut("UInt", 0x3153434D,            ; MAGIC (MCS1)
                "UInt", 0,                     ; flags (0)
                "UInt", this.importCount,      ; n_imports
                "UInt", this.VACount,          ; n_va
                "UInt", this.stubBuffer.size,  ; payload_rva
-               "UInt", this.mcodeBuffer.size, ; payload_size
+               "UInt", this.mcodeSize,        ; payload_size
                "UInt", this.imp_RVA,          ; imp_rva
                "UInt", this.VA_RVA,           ; va_rva
                "UInt", this.pool_RVA,         ; pool_rva
                "UInt", this.IAT_RVA,          ; iat_rva
-               "UInt", Table.entryPoint == "" ? 0 : Table.entryPoint, ; entry_rva (0 для MCode, иначе смещение внутри Payload)
+               "UInt", this.entryPoint,       ; entry_rva (0 для MCode, иначе смещение внутри Payload)
                FinalBlob)
 
-        RtlMoveMemory(FinalBlob.Ptr + this.stubBuffer.size, this.mcodeBuffer.Ptr, this.mcodeBuffer.size)
+        RtlMoveMemory(FinalBlob.Ptr + this.stubBuffer.size, this.mcodeBuffer.Ptr, this.mcodeSize)
 
         current_pool_offset := 0
         for i, imp_data in this.data.IMP {
-            o := this.imp_RVA + ((i - 1) * ShellCode.SIZEOF_IMP_REC)
+            o := this.imp_RVA + ((i - 1) * Blob.SIZEOF_IMP_REC)
 
             NumPut("UInt", current_pool_offset, FinalBlob.Ptr + 0 + o)
             written_bytes := StrPut(imp_data.Dll, FinalBlob.Ptr + this.pool_RVA + current_pool_offset, "CP0")
@@ -116,18 +111,12 @@ class ShellCode {
         }
 
         for i, va_data in this.data.VA {
-            o := this.VA_RVA + ((i - 1) * ShellCode.SIZEOF_VA_REC)
+            o := this.VA_RVA + ((i - 1) * Blob.SIZEOF_VA_REC)
             NumPut("UInt",  va_data.RelocOffset, FinalBlob.Ptr + 0 + o)
             NumPut("UChar", va_data.Size,        FinalBlob.Ptr + 4 + o)
         }
 
-        return {
-            hex:      Binary.BinaryToStrin(FinalBlob, FinalBlob.Size, 12),
-            base64:   Binary.BinaryToStrin(FinalBlob, FinalBlob.Size, 1),
-            compress: Binary.BinaryToCompressedBase64(FinalBlob, FinalBlob.Size, 2),
-            newTable: Table.table,
-            log:      Table.log
-        }
+        return FinalBlob
     }
 
 
@@ -135,8 +124,8 @@ class ShellCode {
         this.data := {IMP: [], VA: []}
         this.stringPoolSize := 0
 
-        loop (this.mcodeArr.Length - 1) {
-            item := StrSplit(this.mcodeArr[A_Index + 1], ":")
+        loop (this.IAT.Length) {
+            item := StrSplit(this.IAT[A_Index], ":")
             if (item[1] == "VA") {
                 this.data.VA.Push({Size: item[2], RelocOffset: item[3]})
             } else {
@@ -158,92 +147,6 @@ class ShellCode {
                 })
             }
         }
-    }
-
-
-    ParseOffsets() {
-        ret               := {table: "", entryPoint: 0, log: ""}
-        parsedTable       := ""
-        validOffsetsCount := 0
-        
-        if (this.entryPoint != "") {
-            if (!this.shellCodeBuild) {
-                ret.log := "Mcode cannot have a specific entry point, it is chosen arbitrarily. If you want to build a Shellcode, change the build method in this window."
-            } else {
-                if IsNumber(this.entryPoint) {
-                    ret.entryPoint := Format("0x{:X}", this.entryPoint + this.Payload_RVA)
-                    ret.log := "Entry point set -> " . ret.entryPoint
-                } else {
-                    escapedKey := RegExReplace(this.entryPoint, "([\\.*+?^${}()|\[\]])", "\$1")
-                    if RegExMatch(this.offsetTable, 'i)offset\["' . escapedKey . '"\] := ptr \+ (0x[0-9a-fA-F]+|\d+)', &m) {
-                        ret.entryPoint := Format("0x{:X}", m[1] + this.Payload_RVA)
-                        ret.log := "Entry point set -> '" . this.entryPoint . "' -> " . ret.entryPoint
-                    } else {
-                        ret.log := "Symbol not found, set the offset manually."
-                    }
-                }
-            }
-        }
-
-        ; форматирование таблицы
-        Loop Parse, this.offsetTable, "`n", "`r" {
-            line := Trim(A_LoopField)
-            if (line = "")
-                continue
-
-            line := RegExReplace(line, "[ \t]+", " ")
-            if RegExMatch(line, 'i)^(offset\["(.*?)"\] := ptr \+ )(0x[0-9a-fA-F]+|\d+)(.*)$', &m) {
-                basePart    := m[1]
-                keyName     := m[2]
-                numPart     := m[3]
-                commentPart := Trim(m[4])
-                
-                ; Комменты
-                if (commentPart = ";") {
-                    commentPart := ""
-                } else if (commentPart != "") {
-                    if (this.formatC && SubStr(commentPart, 1, 1) = ";") {
-                        commentPart := " //" . SubStr(commentPart, 2)
-                    } else {
-                        commentPart := " " . commentPart
-                    }
-                }
-                
-                ; Форматирование под C/C++ или AHK
-                if (this.formatC) {
-                    line := "#define " . keyName . " " . Format("0x{:X}", numPart + this.Payload_RVA) . commentPart
-                } else {
-                    line := basePart . Format("0x{:X}", numPart + this.Payload_RVA) . commentPart
-                }
-                
-                parsedTable .= line . "`n"
-                validOffsetsCount++
-                
-            }
-            ; "offset := Map()", только если это не C-формат
-            else if (!this.formatC && RegExMatch(line, "i)^offset := Map\(\)$")) {
-                parsedTable .= line . "`n"
-            }
-        }
-        
-        ; Проверка на валидность таблицы
-        if (validOffsetsCount == 0) {
-            ret.table := "Failed to read the offset table. Recompile Mcode and try again."
-        } else {
-            ret.table := Trim(parsedTable, "`n")
-        }
-        
-        return ret
-    }
-
-
-    GetKeysFromText(text) {
-        keys := []
-        Loop Parse, text, "`n", "`r" {
-            if RegExMatch(A_LoopField, 'i)offset\["(.*?)"\]', &m)
-                keys.Push(m[1])
-        }
-        return keys
     }
 
 
