@@ -2,7 +2,6 @@
 #SingleInstance Force
 #Include ../MCF.ahk
 
-
 class Blob {
     static SIZEOF_BLOB_HDR := 64
     static SIZEOF_IMP_REC  := 17
