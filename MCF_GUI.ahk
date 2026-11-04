@@ -4,7 +4,7 @@
 #Include const.ahk
 #Include Lib\IDE.ahk
 #Include Lib\CustomListView.ahk
-#Include Lib\MCODE.ahk
+#Include Lib\MCF_MCODE.ahk
 #Include Lib\GuiReSizer.ahk
 #Include Lib\CustomTitleBarWindow.ahk
 #Include Lib\MyCtrl.ahk
@@ -113,13 +113,14 @@ class GuiMcode {
     )"
 
     __New() {
-        MCODE.DarkMode()
+        MCF_MCODE.DarkMode()
         this.CreateMainGUI()
         this.CreateSettingsGUI()
         this.CreateCOFFinfoGUI()
         this.CreateLogGUI()
         this.CreateSearchSymbolsGUI()
         this.Events()
+        this.setModeDDLBtn.Focus()
         this.mainG.Show("w1288 h656")
     }
 
@@ -151,17 +152,18 @@ class GuiMcode {
         this.generateMcodeFromSrc    := this.mainG.AddButton(, "Generate Mcode from source")
         this.copyCode                := this.mainG.AddButton(, "Copy code from source")
         this.generateMcodeFromEditor := this.mainG.AddButton(, "Generate Mcode from editor")
-        this.parseBytes              := this.mainG.AddButton(, "Parse bytes → Mcode formats")
+        this.parseBytes_McodeFormat  := this.mainG.AddButton(, "Parse bytes → Mcode formats")
 
         this.copyHex      := this.mainG.AddButton(, "Copy Hex")
         this.copyBase64   := this.mainG.AddButton(, "Copy Base64")
         this.copyCompress := this.mainG.AddButton(, "Copy Compress")
 
-        this.setModeDDLBtn := this.mainG.AddButton("x10 y5 w135 h22", "GCC")
-        this.setModeDDL    := this.mainG.AddDropDownList("x10 y5 Choose1 0x04000000 0x0210", ["GCC", "MSVC x64", "MSVC x86"])
-        this.settings      := this.mainG.AddButton("x155 y5 h22", "Settings")
-        this.COFFinfo      := this.mainG.AddButton("x237 y5 h22", "COFF info")
-        this.copyMcodeFunc := this.mainG.AddButton("x403 y5 h22", "Copy Mcode Func")
+        this.setModeDDLBtn     := this.mainG.AddButton("x10 y5 w135 h22", "GCC")
+        this.setModeDDL        := this.mainG.AddDropDownList("x10 y5 Choose1 0x04000000 0x0210", ["GCC", "MSVC x64", "MSVC x86"])
+        this.settings          := this.mainG.AddButton("x155 y5 h22", "Settings")
+        this.COFFinfo          := this.mainG.AddButton("x237 y5 h22", "COFF info")
+        this.copyMcodeFunc     := this.mainG.AddButton("y5 h22", "Copy Mcode Func")
+        this.copyShellCodeFunc := this.mainG.AddButton("y5 h22", "Copy ShellCode Func")
 
         this.objdumpRE  := this.mainG.AddRichEdit("Consolas", 11, "0xffffff", "0x101010")
         this.cppRE      := this.mainG.AddRichEdit("Consolas", 11, "0xffffff", "0x101010")
@@ -194,7 +196,7 @@ class GuiMcode {
         GuiReSizer.Opt(this.generateMcodeFromSrc,    "xp0.2 x20 y170 wp-0.6 w15 h22")
         GuiReSizer.Opt(this.copyCode,                "xp0.4 x36 y170 wp-0.4 h22")
         GuiReSizer.Opt(this.generateMcodeFromEditor, "xp0.6 x10 y170 wp0.2  h22")
-        GuiReSizer.Opt(this.parseBytes,              "xp0.8 x19 y170 w-9   h22")
+        GuiReSizer.Opt(this.parseBytes_McodeFormat,  "xp0.8 x19 y170 w-9   h22")
         GuiReSizer.Opt(this.sourceFile,              "x10 y82  wp0.4 w4 h24")
         GuiReSizer.Opt(this.objdumpFlags,            "x116 y41 wp-0.6 w122 h24")
         GuiReSizer.Opt(this.flags,                   "x10 y123 wp0.4 w4 h24")
@@ -204,29 +206,31 @@ class GuiMcode {
         GuiReSizer.Opt(this.addFlagsDDl,             "xp0.4 x157 y123 w24 h24")
         GuiReSizer.Opt(this.copyTable,               "xp0.4 x144 y41 w50 h60")
         GuiReSizer.Opt(this.copyMcodeFunc,           "x-268 y5 h22")
-        this.setFlagsDDL.Function        := (CtrlObj, GuiObj) => PostMessage(0x0153, -1, 18, CtrlObj)
-        this.waitSectionObjdump.Function := (CtrlObj, GuiObj) => PostMessage(0x0153, -1, 16, CtrlObj)
+        GuiReSizer.Opt(this.copyShellCodeFunc,       "x-427 y5 h22")
+        this.setFlagsDDL.Function              := (CtrlObj, GuiObj) => PostMessage(0x0153, -1, 18, CtrlObj)
+        this.waitSectionObjdump.Function       := (CtrlObj, GuiObj) => PostMessage(0x0153, -1, 16, CtrlObj)
 
-        MCODE.CustomButton(this.setModeDDLBtn,           "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766}, true)
-        MCODE.CustomButton(this.COFFinfo,                "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
-        MCODE.CustomButton(this.settings,                "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
-        MCODE.CustomButton(this.copyMcodeFunc,           "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
-        MCODE.CustomButton(this.browseSourceFile,        "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.setFlagsDDLBtn,          "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}, true)
-        MCODE.CustomButton(this.addFlagsDDl,             "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.copyTable,               "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.waitSectionObjdumpBtn,   "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}, true)
-        MCODE.CustomButton(this.generateMcodeFromSrc,    "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.copyCode,                "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.generateMcodeFromEditor, "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.parseBytes,              "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.copyHex,                 "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.copyBase64,              "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.copyCompress,            "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}) ; 0x32606b
+        MCF_MCODE.CustomButton(this.setModeDDLBtn,           "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766}, true)
+        MCF_MCODE.CustomButton(this.COFFinfo,                "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
+        MCF_MCODE.CustomButton(this.settings,                "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
+        MCF_MCODE.CustomButton(this.copyMcodeFunc,           "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
+        MCF_MCODE.CustomButton(this.copyShellCodeFunc,       "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
+        MCF_MCODE.CustomButton(this.browseSourceFile,        "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.setFlagsDDLBtn,          "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}, true)
+        MCF_MCODE.CustomButton(this.addFlagsDDl,             "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.copyTable,               "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.waitSectionObjdumpBtn,   "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}, true)
+        MCF_MCODE.CustomButton(this.generateMcodeFromSrc,    "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.copyCode,                "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.generateMcodeFromEditor, "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.parseBytes_McodeFormat,  "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.copyHex,                 "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.copyBase64,              "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.copyCompress,            "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}) ; 0x32606b
 
-        MCODE.CustomDDL(this.setFlagsDDL,             "0x141414", "0xa3bed1", "0x1f3a3a")
-        MCODE.CustomDDL(this.waitSectionObjdump,      "0x141414", "0xa3bed1", "0x1f3a3a")
-        MCODE.CustomDDL(this.setModeDDL,              "0x141414", "0xa3bed1", "0x1f3a3a")
+        MCF_MCODE.CustomDDL(this.setFlagsDDL,              "0x141414", "0xa3bed1", "0x1f3a3a")
+        MCF_MCODE.CustomDDL(this.waitSectionObjdump,       "0x141414", "0xa3bed1", "0x1f3a3a")
+        MCF_MCODE.CustomDDL(this.setModeDDL,               "0x141414", "0xa3bed1", "0x1f3a3a")
 
         IDE(this.cppRE, RTF.CSyntax)
         IDE(this.objdumpRE, RTF.ObjdumpHighlight)
@@ -254,9 +258,9 @@ class GuiMcode {
                 ctrl.Visible := true
             }
             for ctrl in [this.general_settings, this.linker_settings, this.compiler_settings, this.change_MCF_paths_settings, this.customize_theme_settings, this.hotkey_settings, this.reference_settings] {
-                MCODE.CustomButton(ctrl, btnColors1*)
+                MCF_MCODE.CustomButton(ctrl, btnColors1*)
             }
-            MCODE.CustomButton(GuiCtrlObj, "0x216e5f", "0xfeffff")
+            MCF_MCODE.CustomButton(GuiCtrlObj, "0x216e5f", "0xfeffff")
             DllCall("user32\SendMessage", "Ptr", this.settingsG.Hwnd, "UInt", 0x0127, "Ptr", 0x0001 | ((0x0001 | 0x0002) << 16), "Ptr", 0)
             currentPage := pageName
         }
@@ -340,6 +344,15 @@ class GuiMcode {
         this.demangleSignatures      := this.settingsG.AddButton("x253 y581 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SIGNATURES",        "")),  this.settingsG.AddText("x281 y581 c0x12abd1", "Demangle function signatures")
         this.checkAutoUpdate         := this.settingsG.AddButton("x253 y613 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE",          "")),  this.settingsG.AddText("x281 y613 c0x12abd1", "Check for updates on startup")
 
+        this.buildAhkMcode        := this.settingsG.AddButton("x631 y261 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_AHK_MCODE", "✔")),       this.settingsG.AddText("x659 y261 c0x12abd1", "Build AHK Mcode")
+        this.buildPICShellcode    := this.settingsG.AddButton("x631 y293 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_PIC_SHELLCODE", "")),     this.settingsG.AddText("x659 y293 c0x12abd1", "Build PIC ShellCode")
+        this.buildPICMcodeLibrary := this.settingsG.AddButton("x631 y325 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_PIC_MCODE_LIBRARY", "")), this.settingsG.AddText("x659 y325 c0x12abd1", "Build PIC Mcode library")
+        this.buildExe             := this.settingsG.AddButton("x631 y357 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_EXE", "")),               this.settingsG.AddText("x659 y357 c0x12abd1", "Build Exe (not implemented)")
+        this.buildDll             := this.settingsG.AddButton("x631 y389 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_DLL", "")),               this.settingsG.AddText("x659 y389 c0x12abd1", "Build Dll (not implemented)")
+        this.outputDataFormat_AHK := this.settingsG.AddButton("x631 y421 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_AHK", "")),  this.settingsG.AddText("x659 y421 c0x12abd1", "Output data format [AHK]")
+        this.outputDataFormat_CPP := this.settingsG.AddButton("x631 y453 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_CPP", "")),  this.settingsG.AddText("x659 y453 c0x12abd1", "Output data fprmat [C++]")
+
+
         this.settingsG.AddText("x241 y249 w1100 h2 Background005343")
         this.settingsG.AddText("x619 y250 h400 w2  Background005343")
         Pages["General"] := GetCtrl()
@@ -357,7 +370,7 @@ class GuiMcode {
 
         this.dynamicLinkingAuto  := this.settingsG.AddButton("x253 y41 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_AUTO", "✔")), this.settingsG.AddText("x281 y41 c0x12abd1", "Link all static symbols dynamically (if possible)")
         this.removeLastAlignment := this.settingsG.AddButton("x253 y73 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "REMOVE_LAST_ALIGNMENT", "")), this.settingsG.AddText("x281 y73 c0x12abd1", "Remove last alignment [not implemented]")
-        this.entryPoint          := this.settingsG.AddEdit("x356 y104 w80 h22  Background101010 c11b1a9 Center Number", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "ENTRY_POINT", 0x0)), this.settingsG.AddText("x253 y105 c0x12abd1 BackgroundTrans", "Entry Point:            (decimal number)")
+        this.userEntryPoint      := this.settingsG.AddEdit("x396 y104 w275 h22  Background101010 c11b1a9", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "USER_ENTRY_POINT", "mainA")), this.settingsG.AddText("x253 y105 c0x12abd1 BackgroundTrans", "User Entry Point:")
         this.useOrdinals         := this.settingsG.AddButton("x691 y41 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "USE_ORDINALS", "")), this.settingsG.AddText("x719 y41 c0x12abd1", "Write ordinals, not names, into the IAT")
         this.ignoreSections      := this.settingsG.AddEdit("x826 y72 w424 h22  Background101010 c11b1a9", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "IGNORE_SECTION", ".xdata|.pdata|.rdata$zzz")), this.settingsG.AddText("x691 y73 c0x12abd1", "Ignore Sections:")
         this.useNewPEParser      := this.settingsG.AddCheckbox("x890 y104 w360 h22", "GetProcAddress (old)|PE parser (new)"), this.useNewPEParser.Value := IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "USE_PE_PARSER", 0), this.settingsG.AddText("x691 y105 c0x12abd1", "Symbol lookup (IAT) via:")
@@ -405,45 +418,53 @@ class GuiMcode {
         Pages["Reference"] := GetCtrl()
 
 
-        MCODE.CustomButton(this.general_settings, btnColors1*)
-        MCODE.CustomButton(this.linker_settings, btnColors1*)
-        MCODE.CustomButton(this.compiler_settings, btnColors1*)
-        MCODE.CustomButton(this.change_MCF_paths_settings, btnColors1*)
-        MCODE.CustomButton(this.customize_theme_settings, btnColors1*)
-        MCODE.CustomButton(this.hotkey_settings, btnColors1*)
-        MCODE.CustomButton(this.reference_settings, btnColors1*)
+        MCF_MCODE.CustomButton(this.general_settings, btnColors1*)
+        MCF_MCODE.CustomButton(this.linker_settings, btnColors1*)
+        MCF_MCODE.CustomButton(this.compiler_settings, btnColors1*)
+        MCF_MCODE.CustomButton(this.change_MCF_paths_settings, btnColors1*)
+        MCF_MCODE.CustomButton(this.customize_theme_settings, btnColors1*)
+        MCF_MCODE.CustomButton(this.hotkey_settings, btnColors1*)
+        MCF_MCODE.CustomButton(this.reference_settings, btnColors1*)
 
-        MCODE.CustomButton(this.browseMSVCX64, btnColors3*)
-        MCODE.CustomButton(this.browseMSVCX86, btnColors3*)
-        MCODE.CustomButton(this.browseGCC,     btnColors3*)
-        MCODE.CustomButton(this.browseClang,   btnColors3*)
-        MCODE.CustomButton(this.browseZig,     btnColors3*)
-        MCODE.CustomButton(this.browseObjdump, btnColors3*)
+        MCF_MCODE.CustomButton(this.browseMSVCX64, btnColors3*)
+        MCF_MCODE.CustomButton(this.browseMSVCX86, btnColors3*)
+        MCF_MCODE.CustomButton(this.browseGCC,     btnColors3*)
+        MCF_MCODE.CustomButton(this.browseClang,   btnColors3*)
+        MCF_MCODE.CustomButton(this.browseZig,     btnColors3*)
+        MCF_MCODE.CustomButton(this.browseObjdump, btnColors3*)
 
-        MCODE.CustomButton(this.generateObjdump, btnColors4*)
-        MCODE.CustomButton(this.displayObjdump, btnColors4*)
-        MCODE.CustomButton(this.objdumpHighlighting, btnColors4*)
-        MCODE.CustomButton(this.displayHexMcode, btnColors4*)
-        MCODE.CustomButton(this.displayBase64Mcode, btnColors4*)
-        MCODE.CustomButton(this.displayCompressMcode, btnColors4*)
-        MCODE.CustomButton(this.displayFullOffsetTable, btnColors4*)
-        MCODE.CustomButton(this.demangleSymbols, btnColors4*)
-        MCODE.CustomButton(this.demangleSignatures, btnColors4*)
-        MCODE.CustomButton(this.checkAutoUpdate, btnColors4*)
-        MCODE.CustomButton(this.saveLastCode, btnColors4*)
-        MCODE.CustomButton(this.dynamicLinkingAuto, btnColors4*)
-        MCODE.CustomButton(this.removeLastAlignment, btnColors4*)
-        MCODE.CustomButton(this.ignoreSections, btnColors4*)
-        MCODE.CustomButton(this.useOrdinals, btnColors4*)
-        MCODE.CustomCheckBox(this.useNewPEParser, "0x101010", "0x303030", "0x073333", "0x00b7ff", "0x424242")
-        MCODE.CustomButton(this.cFileMode, btnColors4*)
-        MCODE.CustomButton(this.cppFileMode, btnColors4*)
-        MCODE.CustomButton(this.removeDbgSection, btnColors4*)
-        MCODE.CustomButton(this.optimizeSizeMcode, btnColors4*)
-        MCODE.CustomButton(this.defineNoDebug, btnColors4*)
+        MCF_MCODE.CustomButton(this.generateObjdump, btnColors4*)
+        MCF_MCODE.CustomButton(this.displayObjdump, btnColors4*)
+        MCF_MCODE.CustomButton(this.objdumpHighlighting, btnColors4*)
+        MCF_MCODE.CustomButton(this.displayHexMcode, btnColors4*)
+        MCF_MCODE.CustomButton(this.displayBase64Mcode, btnColors4*)
+        MCF_MCODE.CustomButton(this.displayCompressMcode, btnColors4*)
+        MCF_MCODE.CustomButton(this.displayFullOffsetTable, btnColors4*)
+        MCF_MCODE.CustomButton(this.demangleSymbols, btnColors4*)
+        MCF_MCODE.CustomButton(this.demangleSignatures, btnColors4*)
+        MCF_MCODE.CustomButton(this.checkAutoUpdate, btnColors4*)
 
-        MCODE.CustomButton(this.showTempDir, btnColors2*)
-        MCODE.CustomButton(this.checkUpdate, btnColors2*)
+        MCF_MCODE.CustomButton(this.buildAhkMcode, btnColors4*)
+        MCF_MCODE.CustomButton(this.buildPICShellcode, btnColors4*)
+        MCF_MCODE.CustomButton(this.buildPICMcodeLibrary, btnColors4*)
+        MCF_MCODE.CustomButton(this.buildExe, btnColors4*)
+        MCF_MCODE.CustomButton(this.buildDll, btnColors4*)
+        MCF_MCODE.CustomButton(this.outputDataFormat_AHK, btnColors4*)
+        MCF_MCODE.CustomButton(this.outputDataFormat_CPP, btnColors4*)
+
+        MCF_MCODE.CustomButton(this.saveLastCode, btnColors4*)
+        MCF_MCODE.CustomButton(this.dynamicLinkingAuto, btnColors4*)
+        MCF_MCODE.CustomButton(this.removeLastAlignment, btnColors4*)
+        MCF_MCODE.CustomButton(this.useOrdinals, btnColors4*)
+        MCF_MCODE.CustomCheckBox(this.useNewPEParser, "0x101010", "0x303030", "0x073333", "0x00b7ff", "0x424242")
+        MCF_MCODE.CustomButton(this.cFileMode, btnColors4*)
+        MCF_MCODE.CustomButton(this.cppFileMode, btnColors4*)
+        MCF_MCODE.CustomButton(this.removeDbgSection, btnColors4*)
+        MCF_MCODE.CustomButton(this.optimizeSizeMcode, btnColors4*)
+        MCF_MCODE.CustomButton(this.defineNoDebug, btnColors4*)
+
+        MCF_MCODE.CustomButton(this.showTempDir, btnColors2*)
+        MCF_MCODE.CustomButton(this.checkUpdate, btnColors2*)
 
 
         this.general_settings.OnEvent("Click",          (GuiCtrlObj, Info, Href?) => SwitchPage(GuiCtrlObj, "General"))
@@ -495,10 +516,10 @@ class GuiMcode {
         GuiReSizer.Opt(this.waitSectionHexDump,    "x10 y41 wp0.5 w50")
         this.waitSectionHexDump.Function := (CtrlObj, GuiObj) => PostMessage(0x0153, -1, 19, CtrlObj)
 
-        MCODE.CustomButton(this.displayAllCOFFInfo,        "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
-        MCODE.CustomButton(this.copyMcodeHex,              "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.waitSectionHexDumpBtn,     "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}, true)
-        MCODE.CustomDDL(this.waitSectionHexDump,        "0x141414", "0xa3bed1", "0x1f3a3a")
+        MCF_MCODE.CustomButton(this.displayAllCOFFInfo,        "0x0e2227", "0x00ccff", "0x000d13", 1, {HOT: 0x2a2766})
+        MCF_MCODE.CustomButton(this.copyMcodeHex,              "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.waitSectionHexDumpBtn,     "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a}, true)
+        MCF_MCODE.CustomDDL(this.waitSectionHexDump,        "0x141414", "0xa3bed1", "0x1f3a3a")
 
         IDE(this.hexDumpRE, RTF.HexDump)
         IDE(this.COFFinfoRE, RTF.CoffSyntax)
@@ -564,20 +585,20 @@ class GuiMcode {
         this.searchSymbolsG.AddText("x880 y239 w2    h390 Background005343")
         this.searchSymbolsG.AddText("x0   y629 w1230 h2   Background005343")
 
-        MCODE.CustomButton(this.btn_select_file,         "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.btn_select_dir,          "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.btn_clear_paths,         "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.btn_copy_static,         "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.btn_copy_dynamic,        "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.btn_load_symbols,        "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.btn_generate_cache,      "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.btn_search_symbols,      "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomButton(this.btn_extract_object_file, "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
-        MCODE.CustomCheckBox(this.checkbox_symbol_search,   "0x101010", "0x303030", "0x073333", "0x00b7ff", "0x424242")
-        MCODE.CustomCheckBox(this.checkbox_use_cache,       "0x101010", "0x303030", "0x073333", "0x00b7ff", "0x424242")
-        MCODE.CustomCheckBox(this.checkbox_choose_arch_dll, "0x101010", "0x303030", "0x073333", "0x00b7ff", "0x424242")
-        MCODE.CustomButton(this.btnBox_find_all,         "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
-        MCODE.CustomButton(this.btnBox_recursive_search, "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
+        MCF_MCODE.CustomButton(this.btn_select_file,         "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.btn_select_dir,          "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.btn_clear_paths,         "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.btn_copy_static,         "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.btn_copy_dynamic,        "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.btn_load_symbols,        "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.btn_generate_cache,      "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.btn_search_symbols,      "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomButton(this.btn_extract_object_file, "0x141414", "0xa3bed1", "0x2c4e57", 3, {HOT: 0x1f3a3a})
+        MCF_MCODE.CustomCheckBox(this.checkbox_symbol_search,   "0x101010", "0x303030", "0x073333", "0x00b7ff", "0x424242")
+        MCF_MCODE.CustomCheckBox(this.checkbox_use_cache,       "0x101010", "0x303030", "0x073333", "0x00b7ff", "0x424242")
+        MCF_MCODE.CustomCheckBox(this.checkbox_choose_arch_dll, "0x101010", "0x303030", "0x073333", "0x00b7ff", "0x424242")
+        MCF_MCODE.CustomButton(this.btnBox_find_all,         "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
+        MCF_MCODE.CustomButton(this.btnBox_recursive_search, "0x101010", "0x12abd1", "0x303030", 3, {HOT: "0x1f3a3a"})
         this.lv_viewing_symbols.SetTheme("0x101010", "0xa3bed1", {SELECTED: "", HOT: "0x1f3a3a"}, "0x101010", "0x00ccff", "0x005343", {SELECTED: "0x1c2f31", HOT: "0x066e6e"})
 
         RTF.ReplaceSel(Join(StrSplit(IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "SEARCH_SYMBOLS",     GuiMcode.SEARCH_SYMBOLS), "|"), "`n"), RTF.Comments, this.edit_symbols_RE)
@@ -611,9 +632,10 @@ class GuiMcode {
             ExitApp()
         })
 
-        this.settings.OnEvent("Click",      (*) => this.settingsG.Show("w1260 h614"))
-        this.copyMcodeFunc.OnEvent("Click", (*) => A_Clipboard := GLOBAL_MCODE_FUNC_FINAL)
-        this.COFFinfo.OnEvent("Click",      (*) => this.COFFG.Show("w1200 h640"))
+        this.settings.OnEvent("Click",          (*) => this.settingsG.Show("w1260 h614"))
+        this.copyMcodeFunc.OnEvent("Click",     (*) => A_Clipboard := GLOBAL_MCODE_FUNC_FINAL)
+        this.copyShellCodeFunc.OnEvent("Click", (*) => A_Clipboard := GLOBAL_SHELLCODE_FUNC_FINAL)
+        this.COFFinfo.OnEvent("Click",          (*) => this.COFFG.Show("w1200 h640"))
 
         this.browseSourceFile.OnEvent("Click", (*) => this.sourceFile.Text := (sel := FileSelect(,,, "C/C++/o/obj Files (*.c; *.cpp; *.o; *.obj)")) ? sel : this.sourceFile.Text)
         this.addFlagsDDl.OnEvent("Click",      (*) => MsgBox("not implemented..."))
@@ -650,16 +672,17 @@ class GuiMcode {
                 return this.Error_log("Invalid SRC path: " this.sourceFile.Text)
             this.GenerateMcode(this.sourceFile.Text)
         })
-        this.parseBytes.OnEvent("Click", (*) {
-            er := Binary.ExtractHexBytes(this.cppRE.Text)
-            if (er is Error) {
+
+        this.parseBytes_McodeFormat.OnEvent("Click", (*) {
+            try {
+                bytes := Binary.ExtractHexBytes(this.cppRE.Text)
+                this.hexRE.Text      := bytes
+                this.base64RE.Text   := Binary.HexToBase64(bytes)
+                this.compressRE.Text := Binary.HexToCompressedBase64(bytes)
+            } catch as er {
                 this.hexRE.Text      := er.Message
                 this.base64RE.Text   := er.Message
                 this.compressRE.Text := er.Message
-            } else {
-                this.hexRE.Text      := er
-                this.base64RE.Text   := Binary.HexToBase64(er)
-                this.compressRE.Text := SubStr(Binary.HexToCompressedBase64(er), 9)
             }
         })
 
@@ -671,21 +694,26 @@ class GuiMcode {
             }
         })
 
-        this.copyHex.OnEvent("Click",      (*) => A_Clipboard := CopyFormatMcode(this.HasOwnProp("mcode") && this.mcode.hex))
-        this.copyBase64.OnEvent("Click",   (*) => A_Clipboard := CopyFormatMcode(this.HasOwnProp("mcode") && this.mcode.base64))
-        this.copyCompress.OnEvent("Click", (*) => A_Clipboard := CopyFormatMcode(this.HasOwnProp("mcode") && this.mcode.compress))
+        this.copyHex.OnEvent("Click",      (*) => A_Clipboard := MultilineStr(this.HasOwnProp("mcode") && this.mcode.hex))
+        this.copyBase64.OnEvent("Click",   (*) => A_Clipboard := MultilineStr(this.HasOwnProp("mcode") && this.mcode.base64))
+        this.copyCompress.OnEvent("Click", (*) => A_Clipboard := MultilineStr(this.HasOwnProp("mcode") && this.mcode.compress))
 
         this.warningRE.OnMessage(0x7B, (wParam, lParam, msg, hwnd) { ; WM_CONTEXTMENU = 0x7B
             this.menuWarningRE.Show()
             return 0
         })
 
-        CopyFormatMcode(str) {
+        MultilineStr(str) {
             if (this.HasOwnProp("cf")) {
-                mcode := this.cf.is64 ? 'x64 := "`n(`n' : 'x86 := "`n(`n'
-                mcode .= RegExReplace(str, "(.{" Integer(this.multilineOutputLength.Text) "})", "$1`n") . '`n)"`n'
-                mcode .= "ptr := GetMcodePtr(" (this.cf.is64 ? 'x64' : ', x86') ")"
-                return mcode
+                if (this.outputDataFormat_AHK.Text) {
+                    mcode := this.cf.is64 ? 'x64 := "`n(`n' : 'x86 := "`n(`n'
+                    mcode .= RegExReplace(str, "(.{" Integer(this.multilineOutputLength.Text) "})", "$1`n") . '`n)"`n'
+                    return (mcode .= "ptr := GetMcodePtr(" (this.cf.is64 ? 'x64' : ', x86') ")")
+                } else if (this.outputDataFormat_CPP.Text) {
+                    mcode := "const char* " (this.cf.is64 ? 'x64' : 'x86') " =`n"
+                    mcode .= RegExReplace(str, "(.{1," Integer(this.multilineOutputLength.Text) "})", '"' '$1\n"`n')
+                    return Trim(mcode, "`n") ";"
+                }
             }
         }
 
@@ -728,6 +756,14 @@ class GuiMcode {
             IniWrite(this.checkAutoUpdate.Text         != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE")
             IniWrite(this.multilineOutputLength.Text, Const.GLOBAL_INI_FILE, "SETTINGS", "MULTILINE_OUTPUT_LENGTH")
 
+            IniWrite(this.buildAhkMcode.Text        != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_AHK_MCODE")
+            IniWrite(this.buildPICShellcode.Text    != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_PIC_SHELLCODE")
+            IniWrite(this.buildPICMcodeLibrary.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_PIC_MCODE_LIBRARY")
+            IniWrite(this.buildExe.Text             != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_EXE")
+            IniWrite(this.buildDll.Text             != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_DLL")
+            IniWrite(this.outputDataFormat_AHK.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_AHK")
+            IniWrite(this.outputDataFormat_CPP.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_CPP")
+
             IniWrite(this.cFileMode.Text           != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "C_FILE_MODE")
             IniWrite(this.cppFileMode.Text         != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "CPP_FILE_MODE")
             IniWrite(this.removeDbgSection.Text    != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "REMOVE_DBG_SECTION")
@@ -739,8 +775,8 @@ class GuiMcode {
             IniWrite(this.dynamicLinkingAuto.Text  != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "DYNAMIC_LINKING_AUTO")
             IniWrite(this.removeLastAlignment.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "REMOVE_LAST_ALIGNMENT")
             IniWrite(this.useOrdinals.Text         != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "USE_ORDINALS")
+            IniWrite(this.userEntryPoint.Text,  Const.GLOBAL_INI_FILE, "SETTINGS", "USER_ENTRY_POINT")
             IniWrite(this.useNewPEParser.Value, Const.GLOBAL_INI_FILE, "SETTINGS", "USE_PE_PARSER")
-            IniWrite(this.entryPoint.Text    ,  Const.GLOBAL_INI_FILE, "SETTINGS", "ENTRY_POINT")
             IniWrite(this.ignoreSections.Text,  Const.GLOBAL_INI_FILE, "SETTINGS", "IGNORE_SECTION")
 
             IniWrite(Join(StrSplit(RegExReplace(this.importDllsRE.Text, "\R+", "`n"), "`n"), "|"), Const.GLOBAL_INI_FILE, "SETTINGS", "IMPORT_DLLS")
@@ -784,7 +820,17 @@ class GuiMcode {
         this.dynamicLinkingAuto.OnEvent("Click",      (*) => this.dynamicLinkingAuto.Text      := this.dynamicLinkingAuto.Text      ? "" : "✔")
         this.removeLastAlignment.OnEvent("Click",     (*) => this.removeLastAlignment.Text     := this.removeLastAlignment.Text     ? "" : "✔")
         this.useOrdinals.OnEvent("Click",             (*) => this.useOrdinals.Text             := this.useOrdinals.Text             ? "" : "✔")
-        this.useNewPEParser.OnEvent("Click", (GuiCtrlObj, Info, Href?) => MCODE.CustomCheckBoxToggle(GuiCtrlObj))
+        this.useNewPEParser.OnEvent("Click", (GuiCtrlObj, Info, Href?) => MCF_MCODE.CustomCheckBoxToggle(GuiCtrlObj))
+
+
+        this.buildAhkMcode.OnEvent("Click",        (*) => (this.buildAhkMcode.Text := "✔",        this.buildPICShellcode.Text := "", this.buildPICMcodeLibrary.Text := "", this.buildExe.Text := "", this.buildDll.Text := ""))
+        this.buildPICShellcode.OnEvent("Click",    (*) => (this.buildPICShellcode.Text := "✔",    this.buildAhkMcode.Text := "", this.buildPICMcodeLibrary.Text := "", this.buildExe.Text := "", this.buildDll.Text := ""))
+        this.buildPICMcodeLibrary.OnEvent("Click", (*) => (this.buildPICMcodeLibrary.Text := "✔", this.buildAhkMcode.Text := "", this.buildPICShellcode.Text := "", this.buildExe.Text := "", this.buildDll.Text := ""))
+        this.buildExe.OnEvent("Click",             (*) => (this.buildExe.Text := "✔",             this.buildAhkMcode.Text := "", this.buildPICShellcode.Text := "", this.buildPICMcodeLibrary.Text := "", this.buildDll.Text := ""))
+        this.buildDll.OnEvent("Click",             (*) => (this.buildDll.Text := "✔",             this.buildAhkMcode.Text := "", this.buildPICShellcode.Text := "", this.buildPICMcodeLibrary.Text := "", this.buildExe.Text := ""))
+        this.outputDataFormat_AHK.OnEvent("Click", (*) => (this.outputDataFormat_AHK.Text := "✔", this.outputDataFormat_CPP.Text := ""))
+        this.outputDataFormat_CPP.OnEvent("Click", (*) => (this.outputDataFormat_CPP.Text := "✔", this.outputDataFormat_AHK.Text := ""))
+
 
         ;####################################################### COFF info ######################################################
 
@@ -877,9 +923,9 @@ class GuiMcode {
             IniWrite(this.btnBox_recursive_search.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "SYMBOLS_RECURSIVE_SEARCH")
         })
 
-        this.checkbox_symbol_search.OnEvent("Click",     (GuiCtrlObj, Info, Href?) => MCODE.CustomCheckBoxToggle(GuiCtrlObj))
-        this.checkbox_use_cache.OnEvent("Click",         (GuiCtrlObj, Info, Href?) => MCODE.CustomCheckBoxToggle(GuiCtrlObj))
-        this.checkbox_choose_arch_dll.OnEvent("Click",   (GuiCtrlObj, Info, Href?) => MCODE.CustomCheckBoxToggle(GuiCtrlObj))
+        this.checkbox_symbol_search.OnEvent("Click",     (GuiCtrlObj, Info, Href?) => MCF_MCODE.CustomCheckBoxToggle(GuiCtrlObj))
+        this.checkbox_use_cache.OnEvent("Click",         (GuiCtrlObj, Info, Href?) => MCF_MCODE.CustomCheckBoxToggle(GuiCtrlObj))
+        this.checkbox_choose_arch_dll.OnEvent("Click",   (GuiCtrlObj, Info, Href?) => MCF_MCODE.CustomCheckBoxToggle(GuiCtrlObj))
         this.btnBox_find_all.OnEvent("Click",            (*) => this.btnBox_find_all.Text         := this.btnBox_find_all.Text         ? "" : "✔")
         this.btnBox_recursive_search.OnEvent("Click",    (*) => this.btnBox_recursive_search.Text := this.btnBox_recursive_search.Text ? "" : "✔")
         this.text_message_symbols.OnEvent("DoubleClick", (*) => A_Clipboard := this.text_message_symbols.Text)
@@ -1113,12 +1159,15 @@ class GuiMcode {
         staticLinking         := GUIDataToArray(this.staticLibrariesRE.Text)
         ignoreSec             := StrSplit(RTrim(this.ignoreSections.Text, "`n`r"), "|")
         fullOffsetTable       := this.displayFullOffsetTable.Text != "" ? true : false
-        try ePoint            := Integer(this.entryPoint.Text)
         staticSubstitution    := ParseEditToMap(this.staticSubstitution.Text)
         dynamicSubstitution   := ParseEditToMap(this.dynamicSubstitution.Text)
         demangleLvl           := (this.demangleSymbols.Text ? 1 : 0) + (this.demangleSignatures ? 2 : 0)
         useOrdinals           := this.useOrdinals.Text != "" ? true : false
         usePEparser           := this.useNewPEParser.Value
+
+        buildFormat           := this.buildAhkMcode.Text ? 1 : this.buildPICShellcode.Text ? 2 : this.buildPICMcodeLibrary.Text ? 3 : this.buildExe.Text ? 4 : this.buildDll.Text ? 5 : 0
+        languageFormat        := this.outputDataFormat_AHK.Text ? "ahk" : this.outputDataFormat_CPP.Text ? "cpp" : "ahk"
+        entryPoint            := Trim(this.userEntryPoint.Text, A_Space)
 
         ; Если src это COFF (.o|.obj), то линковщик соберет Mcode без зависимостей от компилятора. COFF копируеться - задел на будущее...
         if (srcIsCOFF) {
@@ -1201,7 +1250,7 @@ class GuiMcode {
                     }
                 } else newStaticLinking := staticLinking
 
-                this.cf := COFF(path, importDll, ignoreSec, fullOffsetTable, ePoint ?? 0, dynamicLinking, newStaticLinking, dynamicSubstitution, staticSubstitution, demangleLvl, useOrdinals, usePEparser)
+                this.cf := COFF(path, importDll, ignoreSec, fullOffsetTable, dynamicLinking, newStaticLinking, dynamicSubstitution, staticSubstitution, demangleLvl, useOrdinals, usePEparser, buildFormat, languageFormat, entryPoint)
                 this.mcode := this.cf.Linker()
 
                 ; Визуальная подсветка самой короткой строки MCode.
@@ -1230,13 +1279,13 @@ class GuiMcode {
                     this.compressRE.Text := "The Compress Mcode will not be displayed visually (you can change this in the settings), but you can still copy it."
                 } else this.compressRE.Text := "The Compress Mcode won't be displayed visually because it exceeds 500,000 characters. However, you can still copy it."
 
-                RTF.ReplaceSel(this.mcode.table, RTF.VsCodeAhk, this.infoRE)
+                RTF.ReplaceSel(this.mcode.table, RTF.Table, this.infoRE)
                 RTF.ReplaceSel("Linker is completed in " QPC() - linkerTime " milliseconds...`n", RTF.Log, this.warningRE,,, true)
-                RTF.ReplaceSel("Mcode was successfully built in " QPC() - totalTime " milliseconds!`n`n", RTF.Log, this.warningRE,,, true)
+                RTF.ReplaceSel("Mcode was successfully built in " QPC() - totalTime " milliseconds!`n", RTF.Log, this.warningRE,,, true)
                 if (this.mcode.dbg.short) { ; Отладочная информация
                     RTF.ReplaceSel(this.mcode.dbg.short, RTF.ErrorLog, this.warningRE,,, true)
                 } else {
-                    RTF.ReplaceSel("No errors occurred during linking!", RTF.VsCodeAhk, this.warningRE,,, true)
+                    RTF.ReplaceSel("No errors occurred during linking!`n`n", RTF.VsCodeAhk, this.warningRE,,, true)
                 }
                 if (this.mcode.dbg.ALL) {
                     this.logLinkerRE.Text := ""
@@ -1244,6 +1293,11 @@ class GuiMcode {
                     FileAppend(this.mcode.dbg.ALL, Const.GLOBAL_MCF_LINKER_LOG, "")
                     ; RTF.ReplaceSel(this.mcode.dbg.ALL, RTF.VsCodeAhk, this.logLinkerRE)
                 }
+
+                if (this.mcode.dbg.other) { ; Прочие предупреждения (если есть)
+                    RTF.ReplaceSel("Other information:`n" this.mcode.dbg.other, RTF.WarningLog, this.warningRE,,, true)
+                }
+
             } catch as er {
                 this.Error_log("ERORR Linker:`n" er.Message " [" er.What "]`n" er.Line " " er.File "`nFor more information about the error, see the log.")
                 try FileDelete(Const.GLOBAL_MCF_LINKER_LOG)

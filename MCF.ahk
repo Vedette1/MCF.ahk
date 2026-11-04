@@ -2,8 +2,9 @@
 #SingleInstance Force
 #Include const.ahk
 #Include Static_Library_Viewer.ahk
-#Include Lib\Demangle.ahk
+#Include Lib\MCF_MCODE.ahk
 #Include Lib\PEExportParser.ahk
+#Include stub_blob\blob.ahk
 
 class Binary {
     static BinaryToStrin(bin, len, flag) {
@@ -133,7 +134,7 @@ class Binary {
         }
         
         if (hexStr == "")
-            return Error("Could not find valid bytes in the transferred data.")
+            throw Error("Could not find valid bytes in the transferred data.")
         return hexStr
     }
 
@@ -273,9 +274,6 @@ class COFF {
      * @param {Integer} fullOffsetTable - Если `fullOffsetTable == false`, то линковщик вернет смещения только нужных символов (функции / глобалки*), в ином случае будет полная таблица всех символов.
      * К слову я без понятия как понять какой символ является "НУЖНЫМ", условно MSVC помечает строки (секции со строками) как StorageClass == 2, а GCC так не делает, так что тут все зависит от компилятора.
      * Но в любом случае, в основном полезно видеть все символы, что бы лучше понимать куда компилятор положил тот или иной код, так что рекомендуется оставлять `fullOffsetTable := true`.
-     * @param {Integer} entryPoint - Можно задать точку входа по X смещению для нужной функции. Это актуально если есть две и более функции в одном Mcode... Ну например:
-     * Есть три функции `[func1, func2, func3]` их смещения `[0x0, 0x10, 0x50]`. Что бы вызвать func3 нужно написать `DllCall(ptr + 0x50)`, но можно задать точку входа `entryPoint := 0x50`,
-     * и тогда не придется писать смещению в ручную - `DllCall(ptr)` вызовет именно func3, а не func1. Пока что в `entryPoint` нет смысла, но в дальнейшем линковщик будет поддерживать сборку Shellcode, и тогда это пригодится.
      * @param {Integer | Array} dynamicLinking - Для функций `malloc`, да и в целом большинства функций из `msvcrt` (например), компилятор подразумевает статическую линковку (генерирует call с опкодом `[E8 00 00 00 00] || [E9 00 00 00 00]`, а не jmp инструкции).
      * Это не есть хорошо, ибо раздувает размер конечного Mcode. `dynamicLinking` позволяет указать массив функций, которые будут 100% слинкованны динамически, а не статически.
      * - Если `dynamicLinking := [dllFunc1, dllFunc2, ...]`, то, если символ из массива `dynamicLinking` найден в `importDll`, то эта функция будет динамически слинвокана (она окажется в IAT). Функция `GetMcodePtr` создаст трамплин `[E8|E9 00 00 00 00 + [FF 25 (PTR)]]`.
@@ -283,20 +281,25 @@ class COFF {
      * - Если `dynamicLinking := false`, то класс не будет пытаться патчить asm инструкции. То есть, если компилятор подразумевает статическую линковку для определенного символа, то он будет статически слинкован.
      * @param {Array} staticLibraries - Массив экземпляров класса StaticLibraryParser для статической линковки.
      */
-    __New(obj, importDll := ["User32", "msvcrt", "Kernel32"], ignoreSections := [".pdata", ".xdata", ".rdata$zzz"], fullOffsetTable := true, entryPoint := 0x0, dynamicLinking := true, staticLibraries := [], dynamicSubstitution := Map(), staticSubstitution := Map(), demangleLvl := 1, useOrdinals := true, usePEParser := false) {
-        this.obj                 := obj                 ; Путь до COFF (.o / .obj) файла.
-        this.importDll           := importDll           ; Массив dll которые используются в конечном Mcode (если есть внешнии символы).
-        this.ignoreSections      := ignoreSections      ; Массив секций, которые будут игнорироватся при линковке (в основном сюда ничего не нужно дописывать).
-        this.fullOffsetTable     := fullOffsetTable     ; Если fullOffsetTable == false, то линковщик вернет смещения только нужных символов (функции / глобалки*), в ином случае будет полная таблица всех символов.
-        this.entryPoint          := entryPoint          ; Точка входа.
-        this.dynamicLinking      := dynamicLinking      ; Управление динамической линковкой: false, true или массив конкретных функций.
-        this.staticLibraries     := staticLibraries     ; Массив статических библиотек (экземпляры StaticLibraryParser).
-        this.dynamicSubstitution := dynamicSubstitution ; Подмена динамических символов.
-        this.staticSubstitution  := staticSubstitution  ; Подмена статических символов.
-        this.demangleLvl         := demangleLvl         ; Деманглирование символов в таблице смещений. Работает только с GCC / Clang. MSVC не поддерживается.
-        this.useOrdinals         := useOrdinals         ; В мини IAT будут записываться ординалы функций (порядковый номер), а не их именна. Это экономит место, а так же делает Mcode более сложночитаемым.
-        this.usePEParser         := usePEParser         ; Если `false` используется LoadLibrary + GetProcAddress для поиска символов в dll для IAT, в ином случае dll не загружаются в память, а читаются файлы.
-        this.dbgLogInfo          := ""
+    __New(obj, importDll := ["User32", "msvcrt", "Kernel32"], ignoreSections := [".pdata", ".xdata", ".rdata$zzz"], fullOffsetTable := true, dynamicLinking := true, staticLibraries := [], dynamicSubstitution := Map(), staticSubstitution := Map(), demangleLvl := 1, useOrdinals := true, usePEParser := false, buildFormat := 1, languageFormat := "AHK", entryPoint := "mainA") {
+        this.obj                 := obj                      ; Путь до COFF (.o / .obj) файла.
+        this.importDll           := importDll                ; Массив dll которые используются в конечном Mcode (если есть внешнии символы).
+        this.ignoreSections      := ignoreSections           ; Массив секций, которые будут игнорироватся при линковке (в основном сюда ничего не нужно дописывать).
+        this.fullOffsetTable     := fullOffsetTable          ; Если fullOffsetTable == false, то линковщик вернет смещения только нужных символов (функции / глобалки*), в ином случае будет полная таблица всех символов.
+        this.dynamicLinking      := dynamicLinking           ; Управление динамической линковкой: false, true или массив конкретных функций.
+        this.staticLibraries     := staticLibraries          ; Массив статических библиотек (экземпляры StaticLibraryParser).
+        this.dynamicSubstitution := dynamicSubstitution      ; Подмена динамических символов.
+        this.staticSubstitution  := staticSubstitution       ; Подмена статических символов.
+        this.demangleLvl         := demangleLvl              ; Деманглирование символов в таблице смещений. Работает только с GCC / Clang. MSVC не поддерживается.
+        this.useOrdinals         := useOrdinals              ; В мини IAT будут записываться ординалы функций (порядковый номер), а не их именна. Это экономит место, а так же делает Mcode более сложночитаемым.
+        this.usePEParser         := usePEParser              ; Если `false` используется LoadLibrary + GetProcAddress для поиска символов в dll для IAT, в ином случае dll не загружаются в память, а читаются файлы.
+        this.buildFormat         := buildFormat              ; 1 - AHK Mcode | 2 - PIC Shellcode | 3 - PIC Mcode Lib (произвольный вызов функций в отличии от Shellcode) | 4 - Exe | 5 - Dll
+        this.languageFormat      := StrLower(languageFormat) ; AHK | C / C++
+        this.entryPoint          := entryPoint               ; Пользовательский символ который будет являться точкой входа (кроме "main", ибо это слово зарезервировано компилятором)
+        
+        this.dbgLogInfo          := "" ; Полный лог сборки.
+        this.shortDbgInfo        := "" ; Ошибки для main окна GUI (самые основные / главные ошибки)
+        this.otherDbgInfo        := "" ; Прочая информация для main окна GUI (предупреждения)
 
         this.imports           := []  ; Массив объектов импортируемых символов из dll (__imp_).
         this.unresolvedSymbols := []  ; Массив объектов неразрешённых символов (статическая линковка).
@@ -564,10 +567,10 @@ class COFF {
 
     Linker() {
         layout               := []
-        currentOffset        := this.entryPoint <= 0 ? 0 : this.entryPoint <= 0xFF ? 2 : this.entryPoint <= 0xFFFFFFFF ? 5 : 0
+        currentOffset        := 0x0
         IAT                  := "|"
         unresolvedSymbolsNew := []
-        shortDbgInfo         := ""
+        this.shortDbgInfo    := ""
         this.dbgLogInfo      := "[Layout] Analyzing and merging sections:`n"
 
         ; --- Очередь объектных файлов для статической линковки ---
@@ -792,7 +795,7 @@ class COFF {
                                     try {
                                         ; Извлекаем .obj в память (Buffer) и парсим как COFF
                                         buf := lib.ExtractMemberToBuffer(objInfo.ObjFile)
-                                        newCoff := COFF(buf, this.importDll, this.ignoreSections, this.fullOffsetTable, 0, this.dynamicLinking, this.staticLibraries)
+                                        newCoff := COFF(buf, this.importDll, this.ignoreSections, this.fullOffsetTable, this.dynamicLinking, this.staticLibraries)
 
                                         if (this.is64 != newCoff.is64) ; Проверка битности
                                             throw Error("Architecture mismatch: main object is " (this.is64 ? "x64" : "x86") ", but '" objInfo.ObjFile "' is " (newCoff.is64 ? "x64" : "x86"))
@@ -816,7 +819,6 @@ class COFF {
             throw Error("No executable code or data found.")
 
         mcode := Buffer(totalSize, 0)
-        COFF.EntryPoint(this.entryPoint + (this.entryPoint == 0 ? 0 : this.alignment[1]), mcode)
         
         for item in layout {
             ; COMDAT-дубликаты не копируем (их данные уже лежат в оригинале)
@@ -938,6 +940,8 @@ class COFF {
                         return true
                     }
                 } else {
+                    if !(loadedDlls.Has(dll))
+                        continue
                     hMod := loadedDlls[dll]
                     if (DllCall("GetProcAddress", "Ptr", hMod, "AStr", exp.func, "Ptr")) {
                         if (writeIAT) {
@@ -960,10 +964,10 @@ class COFF {
             for exp in this.imports {
                 if !(ResolveAndAdd(exp)) {
                     if (line) {
-                        shortDbgInfo .= "Not found imports [DLL]:`n"
+                        this.shortDbgInfo .= "Not found imports [DLL]:`n"
                         line := false
                     }
-                    shortDbgInfo .= "`tsymbol: '" exp.func "' -> offset: " Format("0x{:X}", exp.patchOffset) " -> reloc type " Format("0x{:X}", exp.type) "`n"
+                    this.shortDbgInfo .= "`tsymbol: '" exp.func "' -> offset: " Format("0x{:X}", exp.patchOffset) " -> reloc type " Format("0x{:X}", exp.type) "`n"
                 }
             }
         }
@@ -1003,9 +1007,9 @@ class COFF {
             this.unresolvedSymbols := unresolvedSymbolsNew
 
             if (this.unresolvedSymbols.Length) {
-                shortDbgInfo .= "Unresolved symbols not found (static)`n"
+                this.shortDbgInfo .= "Unresolved symbols not found (static)`n"
                 for exp in this.unresolvedSymbols {
-                    shortDbgInfo .= "`tsymbol: '" exp.func "' -> offset: " Format("0x{:X}", exp.patchOffset) " -> reloc type " Format("0x{:X}", exp.type) . (ResolveAndAdd(exp, false) ? " // It can be made dynamic`n" : " // This cannot be made dynamic.`n")
+                    this.shortDbgInfo .= "`tsymbol: '" exp.func "' -> offset: " Format("0x{:X}", exp.patchOffset) " -> reloc type " Format("0x{:X}", exp.type) . (ResolveAndAdd(exp, false) ? " // It can be made dynamic`n" : " // This cannot be made dynamic.`n")
                 }
             }
         }
@@ -1031,19 +1035,81 @@ class COFF {
                 }
                 
                 if (secOffset != -1) {
-                    this.exportedSymbols[i] := {symbol: symbol.Name, offset: Format("0x{:X}", secOffset + symbol.Value), opt: symbol.StorageClass != 2 ? " [dispensable] | " : ""}
+                    this.exportedSymbols[i] := {symbol: symbol.Name, offset: secOffset + symbol.Value, opt: symbol.StorageClass != 2 ? " [dispensable] | " : ""}
                 }
             }
         }
 
-        this.dbgLogInfo .= "`n[Linker] Linking process completed " . (shortDbgInfo == "" ? "successfully, most likely no errors!`n" : "with errors. Check main GUI for potential issues...`n")
-        return {
-            hex:      Binary.BinaryToStrin(mcode, mcode.Size, 12)           . RTrim(IAT, "|"),
-            base64:   Binary.BinaryToStrin(mcode, mcode.Size, 1)            . RTrim(IAT, "|"),
-            compress: Binary.BinaryToCompressedBase64(mcode, mcode.Size, 2) . RTrim(IAT, "|"),
-            table:    Demangle.ExportedSymbolsDump(this.exportedSymbols, this.demangleLvl),
-            dbg:      {ALL: this.dbgLogInfo, short: shortDbgInfo}
+        this.dbgLogInfo .= "`n[Linker] Linking process completed " . (this.shortDbgInfo == "" ? "successfully, most likely no errors!`n" : "with errors. Check main GUI for potential issues...`n")
+
+        return this.RetMcode(mcode, IAT)
+    }
+
+
+    RetMcode(mcode, IAT) {
+        SearchEntryPoint() {
+            for i, sym in this.exportedSymbols {
+                if (this.entryPoint is String && sym.symbol == this.entryPoint) {
+                    if (sym.symbol == "main") {
+                        this.otherDbgInfo .= 'ERROR: You cannot use the symbol "main" as an entry point, as it is reserved by the compiler. Please change it to something else of your choosing.`n'
+                        return 0
+                    }
+                    this.otherDbgInfo .= 'Entry point successfully set "' sym.symbol ' -> ' sym.offset '"`nThe assembly was successful!`n'
+                    return sym.offset
+                } else if (IsInteger(this.entryPoint)) {
+                    this.otherDbgInfo .= "Entry point successfully set... This is the number " Format("0x{:X}", this.entryPoint) ". This is acceptable. However, ensure that it is a valid offset.`nThe assembly was successful!`n"
+                    return this.entryPoint
+                } else {
+                    this.otherDbgInfo .= 'ERROR: Entry point "' this.entryPoint '" not found. In the settings window, specify the actual symbol name that will serve as YOUR entry point, or the offset (number).`n'
+                    return 0
+                }
+            }
         }
+
+        IAT := RTrim(IAT, "|")
+        ret := {hex: "", base64: "", compress: "", table: "", dbg: {ALL: "", short: "", other: ""}}
+        if (this.buildFormat == 1) { ; AHK Mcode
+            this.otherDbgInfo .= 'You are assembling "AHK Mcode"...`n'
+            ret.hex       := Binary.BinaryToStrin(mcode, mcode.Size, 12)           . IAT
+            ret.base64    := Binary.BinaryToStrin(mcode, mcode.Size, 1)            . IAT
+            ret.compress  := Binary.BinaryToCompressedBase64(mcode, mcode.Size, 2) . IAT
+            ret.table     := Demangle.ExportedSymbolsDump(this.exportedSymbols, this.demangleLvl, this.languageFormat, 0)
+            this.otherDbgInfo .= 'The assembly was successful!'
+            ret.dbg.ALL   := this.dbgLogInfo
+            ret.dbg.short := this.shortDbgInfo
+            ret.dbg.other := this.otherDbgInfo
+        } else if (this.buildFormat == 2) { ; PIC Shellcode
+            this.otherDbgInfo .= 'You are assembling "PIC Shellcode"...`n'
+            b := Blob(mcode, mcode.Size, IAT, this.is64, SearchEntryPoint())
+            finalBlob := b.Build()
+            ret.hex       := Binary.BinaryToStrin(FinalBlob, FinalBlob.Size, 12)
+            ret.base64    := Binary.BinaryToStrin(FinalBlob, FinalBlob.Size, 1)
+            ret.compress  := Binary.BinaryToCompressedBase64(FinalBlob, FinalBlob.Size, 2)
+            ret.table     := Demangle.ExportedSymbolsDump(this.exportedSymbols, this.demangleLvl, this.languageFormat, b.Payload_RVA)
+            ret.dbg.ALL   := this.dbgLogInfo
+            ret.dbg.short := this.shortDbgInfo
+            ret.dbg.other := this.otherDbgInfo
+        } else if (this.buildFormat == 3) { ; PIC Mcode Lib
+            this.otherDbgInfo .= 'You are assembling "PIC Mcode Library"...`n'
+            b := Blob(mcode, mcode.Size, IAT, this.is64, 0)
+            finalBlob := b.Build()
+            ret.hex       := Binary.BinaryToStrin(FinalBlob, FinalBlob.Size, 12)
+            ret.base64    := Binary.BinaryToStrin(FinalBlob, FinalBlob.Size, 1)
+            ret.compress  := Binary.BinaryToCompressedBase64(FinalBlob, FinalBlob.Size, 2)
+            ret.table     := Demangle.ExportedSymbolsDump(this.exportedSymbols, this.demangleLvl, this.languageFormat, b.Payload_RVA)
+            this.otherDbgInfo .= 'The assembly was successful!'
+            ret.dbg.ALL   := this.dbgLogInfo
+            ret.dbg.short := this.shortDbgInfo
+            ret.dbg.other := this.otherDbgInfo
+        } else if (this.buildFormat == 4) { ; Exe
+            throw Error("The EXE build is not supported! Choose other build options...")
+        } else if (this.buildFormat == 5) { ; Dll
+            throw Error("The DLL build is not supported! Choose other build options...")
+        } else {
+            throw Error("Unforeseen build mode...")
+        }
+
+        return ret
     }
 
 
@@ -1183,70 +1249,4 @@ class COFF {
         }
         return m
     }
-
-
-    static EntryPoint(jmpOffset, buf) {
-        if (!(jmpOffset is Integer) || jmpOffset <= 0)
-            return 0
-        if (jmpOffset <= 0xFF + 2) {
-            NumPut("UChar", 0xEB, "UChar", jmpOffset - 2, buf) ; jmp rel8 [EB 00]
-        } else if (jmpOffset<= 0xFFFFFFFF + 5) {
-            NumPut("UChar", 0xE9, "UInt", jmpOffset - 5, buf) ; jmp rel32 [E9 00 00 00 00]
-        } else return 0
-    }
-}
-
-
-GetMcodePtr(x64 := "", x86 := "") {
-    p := A_PtrSize, code := StrSplit(RegExReplace(p=8 ? x64 : x86, "\s+"), "|")
-    if ((SubStr(code[1], 1, 1) == "$")) {
-        oSize   := Integer("0x" SubStr(code[1], 2, 6))
-        cmpFmt  := Integer(SubStr(code[1], 8, 1))
-        code[1] := SubStr(code[1], 9)
-        DllCall("Crypt32\CryptStringToBinary", "Str", code[1], "UInt", 0, "UInt", 1, "Ptr", 0, "UInt*", &size := 0, "Ptr", 0, "Ptr", 0)
-        DllCall("Crypt32\CryptStringToBinary", "Str", code[1], "UInt", 0, "UInt", 1, "Ptr", cbuf := Buffer(size), "UInt*", size, "Ptr", 0, "Ptr", 0)
-        DllCall("ntdll\RtlDecompressBuffer", "UShort", cmpFmt, "Ptr", ubuf := Buffer(oSize), "UInt", oSize, "Ptr", cbuf, "UInt", size, "UInt*", &sz := 0, "UInt")
-        ptr := DllCall("VirtualAlloc", "Ptr", 0, "Ptr", sz + (code.Length - 1) * 16, "UInt", 0x3000, "UInt", 0x40, "Ptr")
-        DllCall("RtlMoveMemory", "Ptr", ptr, "Ptr", ubuf, "Ptr", oSize)
-    } else {
-        crypt := RegExMatch(code[1], "^[0-9a-fA-F]+$") ? 12 : 1
-        DllCall("Crypt32\CryptStringToBinary", "Str", code[1], "UInt", 0, "UInt", crypt, "Ptr", 0, "UInt*", &sz := 0, "Ptr", 0, "Ptr", 0)
-        ptr := DllCall("VirtualAlloc", "Ptr", 0, "Ptr", sz + (code.Length - 1) * 16, "UInt", 0x3000, "UInt", 0x40, "Ptr")
-        DllCall("Crypt32\CryptStringToBinary", "Str", code[1], "UInt", 0, "UInt", crypt, "Ptr", ptr, "UInt*", sz, "Ptr", 0, "Ptr", 0)
-    }
-    
-    iatOffset := 0
-    Loop (code.Length - 1) {
-        item := StrSplit(code[A_Index + 1], ":")
-        if (item[1] == "VA") {
-            VAsz := Integer(item[2]), offset := Integer(item[3])
-            val := NumGet(ptr + offset, VAsz == 8 ? "UInt64" : "UInt")
-            NumPut(VAsz == 8 ? "UInt64" : "UInt", val + ptr, ptr + offset)
-            continue
-        }
-        
-        pFunc := DllCall("GetProcAddress", "Ptr", DllCall("LoadLibrary", "Str", item[1], "Ptr"), "AStr", item[2], "Ptr")
-        patchOffset := Integer(item[3]), disp := Integer(item[4])
-        pEntry := ptr + sz + iatOffset
-
-        opcode := NumGet(ptr + patchOffset - 1, "UChar")
-        if (opcode == 0xE8 || opcode == 0xE9) {
-            if (p == 8) {
-                NumPut("UShort", 0x25FF, "UInt", 0x00000000, "Ptr", pFunc, pEntry)
-                NumPut("Int", pEntry - (ptr + patchOffset + disp), ptr + patchOffset)
-                iatOffset += 16
-            } else {
-                NumPut("Int", pFunc - (ptr + patchOffset + disp), ptr + patchOffset)
-            }
-        } else {
-            NumPut("Ptr", pFunc, pEntry)
-            if (p == 8) {
-                NumPut("Int", pEntry - (ptr + patchOffset + disp), ptr + patchOffset)
-            } else {
-                NumPut("UInt", pEntry, ptr + patchOffset)
-            }
-            iatOffset += p
-        }
-    }
-    return ptr
 }
