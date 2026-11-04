@@ -1,5 +1,5 @@
 ﻿#Requires AutoHotkey v2.0
-#Include MCODE.ahk
+#Include MCF_MCODE.ahk
 
 class MyCtrl extends Gui {
     static __New() {
@@ -51,7 +51,7 @@ class MyCtrl extends Gui {
             TxtSrv := ComObjQuery(IRichEditOle, IID_ITextServices)
             ComCall(19, TxtSrv, "int", TXTBIT_ALLOWBEEP | TXTBIT_MULTILINE, "int", TXTBIT_MULTILINE, "UInt")
         }
-        MCODE.CustomBorder(RE)
+        MCF_MCODE.CustomBorder(RE)
         return RE
     }
 
@@ -60,7 +60,7 @@ class MyCtrl extends Gui {
         static origAddEdit := Gui.Prototype.AddEdit
         Gui.Prototype.DefineProp("AddEdit", {Call: (this, Options := "", Text := "") {
             e := origAddEdit(this, Options, Text)
-            MCODE.CustomBorder(e)
+            MCF_MCODE.CustomBorder(e)
             return e
         }})
     }

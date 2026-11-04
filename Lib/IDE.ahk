@@ -20,6 +20,24 @@ class RTF {
     ]
 
 
+    static Table := [
+        {color: 0x9CDCFE},
+        {color: 0xcf876a, patterns: ['".*?"'], type: "regex"},
+        {color: 0xcf876a, patterns: ["'.*?'"], type: "regex"},
+        {color: 0xa8d88e, patterns: ["\b0x[0-9a-fA-F]+\b"], type: "regex"},
+        {color: 0xa8d88e, patterns: ["\b\d+\b"], type: "regex"},
+        {color: 0xf6f5f5, patterns: ["\.|,|:=|=|\+|\\"], type: "regex"},
+        {color: 0xe7e734, patterns: ["\(|\)"], type: "regex"},
+        {color: 0xf759ea, patterns: ["\[|\]"], type: "regex"},
+        {color: 0x1d99ff, patterns: ["\{|}"],  type: "regex"},
+        {color: 0x589d38, patterns: [";.*$"],  type: "regex"},
+        {color: 0x589d38, patterns: ["//.*$"], type: "regex"},
+        {color: 0x12d1ab, patterns: ["Map"], type: "word"},
+        {color: 0xC586C0, patterns: ["\#define"], type: "regex"},
+        {color: 0x2a71ab, patterns: ["(?<=#define\s)\w+"], type: "regex"},
+    ]
+
+
     static CoffSyntax := [
         {color: 0xCE9178},
         {color: 0xF759EA, patterns: ["\[|\]"], type: "regex"}, ; []
@@ -79,6 +97,20 @@ class RTF {
 
     static ErrorLog := [
         {color: "0xec5454"},
+        ;{color: 0x4557ff, patterns: ["\p{Lu}"], type: "regex"},
+        {color: 0xcf876a, patterns: ['".*?"'], type: "regex"},
+        {color: 0xcf876a, patterns: ["'.*?'"], type: "regex"},
+        {color: 0xa8d88e, patterns: ["\b\d+\b"], type: "regex"},
+        {color: 0xE7E734, patterns: ["\(|\)"], type: "regex"},
+        {color: 0xF759EA, patterns: ["\[|\]"], type: "regex"},
+        {color: 0x1D99FF, patterns: ["\{|}"],  type: "regex"},
+        {color: 0xFFFFFF, patterns: ["\.|\!|\||\^|\;|\:|\~"], type: "regex"},
+        {color: 0x589d38, patterns: ["//.*$"], type: "regex"},
+    ]
+
+
+    static WarningLog := [
+        {color: "0xdaa83d"},
         ;{color: 0x4557ff, patterns: ["\p{Lu}"], type: "regex"},
         {color: 0xcf876a, patterns: ['".*?"'], type: "regex"},
         {color: 0xcf876a, patterns: ["'.*?'"], type: "regex"},
