@@ -711,7 +711,7 @@ class GuiMcode {
                     return (mcode .= "ptr := GetMcodePtr(" (this.cf.is64 ? 'x64' : ', x86') ")")
                 } else if (this.outputDataFormat_CPP.Text) {
                     mcode := "const char* " (this.cf.is64 ? 'x64' : 'x86') " =`n"
-                    mcode .= RegExReplace(str, "(.{1," Integer(this.multilineOutputLength.Text) "})", '"' '$1\n"`n')
+                    mcode .= RegExReplace(str, "(.{1," Integer(this.multilineOutputLength.Text) "})", '"' '$1"`n')
                     return Trim(mcode, "`n") ";"
                 }
             }
