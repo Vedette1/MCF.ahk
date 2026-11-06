@@ -1047,15 +1047,15 @@ class COFF {
 
 
     RetMcode(mcode, IAT) {
-        SearchEntryPoint() {
+        SearchEntryPoint(Payload_RVA) {
             for i, sym in this.exportedSymbols {
                 if (this.entryPoint is String && sym.symbol == this.entryPoint) {
                     if (sym.symbol == "main") {
                         this.otherDbgInfo .= 'ERROR: You cannot use the symbol "main" as an entry point, as it is reserved by the compiler. Please change it to something else of your choosing.`n'
                         return 0
                     }
-                    this.otherDbgInfo .= 'Entry point successfully set "' sym.symbol ' -> ' sym.offset '"`nThe assembly was successful!`n'
-                    return sym.offset
+                    this.otherDbgInfo .= 'Entry point successfully set "' sym.symbol ' -> ' Format("0x{:X}", sym.offset + Payload_RVA) '"`nThe assembly was successful!`n'
+                    return sym.offset + Payload_RVA
                 } else if (IsInteger(this.entryPoint)) {
                     this.otherDbgInfo .= "Entry point successfully set... This is the number " Format("0x{:X}", this.entryPoint) ". This is acceptable. However, ensure that it is a valid offset.`nThe assembly was successful!`n"
                     return this.entryPoint
@@ -1080,8 +1080,9 @@ class COFF {
             ret.dbg.other := this.otherDbgInfo
         } else if (this.buildFormat == 2) { ; PIC Shellcode
             this.otherDbgInfo .= 'You are assembling "PIC Shellcode"...`n'
-            b := Blob(mcode, mcode.Size, IAT, this.is64, SearchEntryPoint())
-            finalBlob := b.Build()
+            b := Blob(mcode, mcode.Size, IAT, this.is64, 0)
+            b.entryPoint  := SearchEntryPoint(b.Payload_RVA)
+            finalBlob     := b.Build()
             ret.hex       := Binary.BinaryToStrin(FinalBlob, FinalBlob.Size, 12)
             ret.base64    := Binary.BinaryToStrin(FinalBlob, FinalBlob.Size, 1)
             ret.compress  := Binary.BinaryToCompressedBase64(FinalBlob, FinalBlob.Size, 2)
@@ -1092,7 +1093,7 @@ class COFF {
         } else if (this.buildFormat == 3) { ; PIC Mcode Lib
             this.otherDbgInfo .= 'You are assembling "PIC Mcode Library"...`n'
             b := Blob(mcode, mcode.Size, IAT, this.is64, 0)
-            finalBlob := b.Build()
+            finalBlob     := b.Build()
             ret.hex       := Binary.BinaryToStrin(FinalBlob, FinalBlob.Size, 12)
             ret.base64    := Binary.BinaryToStrin(FinalBlob, FinalBlob.Size, 1)
             ret.compress  := Binary.BinaryToCompressedBase64(FinalBlob, FinalBlob.Size, 2)
