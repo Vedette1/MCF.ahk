@@ -344,13 +344,15 @@ class GuiMcode {
         this.demangleSignatures      := this.settingsG.AddButton("x253 y581 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "DEMANGLE_SIGNATURES",        "")),  this.settingsG.AddText("x281 y581 c0x12abd1", "Demangle function signatures")
         this.checkAutoUpdate         := this.settingsG.AddButton("x253 y613 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE",          "")),  this.settingsG.AddText("x281 y613 c0x12abd1", "Check for updates on startup")
 
-        this.buildAhkMcode        := this.settingsG.AddButton("x631 y261 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_AHK_MCODE", "✔")),       this.settingsG.AddText("x659 y261 c0x12abd1", "Build AHK Mcode")
-        this.buildPICShellcode    := this.settingsG.AddButton("x631 y293 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_PIC_SHELLCODE", "")),     this.settingsG.AddText("x659 y293 c0x12abd1", "Build PIC ShellCode")
-        this.buildPICMcodeLibrary := this.settingsG.AddButton("x631 y325 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_PIC_MCODE_LIBRARY", "")), this.settingsG.AddText("x659 y325 c0x12abd1", "Build PIC Mcode library")
-        this.buildExe             := this.settingsG.AddButton("x631 y357 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_EXE", "")),               this.settingsG.AddText("x659 y357 c0x12abd1", "Build Exe (not implemented)")
-        this.buildDll             := this.settingsG.AddButton("x631 y389 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_DLL", "")),               this.settingsG.AddText("x659 y389 c0x12abd1", "Build Dll (not implemented)")
-        this.outputDataFormat_AHK := this.settingsG.AddButton("x631 y421 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_AHK", "")),  this.settingsG.AddText("x659 y421 c0x12abd1", "Output data format [AHK]")
-        this.outputDataFormat_CPP := this.settingsG.AddButton("x631 y453 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_CPP", "")),  this.settingsG.AddText("x659 y453 c0x12abd1", "Output data fprmat [C++]")
+        this.buildAhkMcode            := this.settingsG.AddButton("x631 y261 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_AHK_MCODE", "✔")),          this.settingsG.AddText("x659 y261 c0x12abd1", "Build AHK Mcode")
+        this.buildPICShellcode        := this.settingsG.AddButton("x631 y293 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_PIC_SHELLCODE", "")),        this.settingsG.AddText("x659 y293 c0x12abd1", "Build PIC ShellCode")
+        this.buildPICMcodeLibrary     := this.settingsG.AddButton("x631 y325 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_PIC_MCODE_LIBRARY", "")),    this.settingsG.AddText("x659 y325 c0x12abd1", "Build PIC Mcode library")
+        this.buildExe                 := this.settingsG.AddButton("x631 y357 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_EXE", "")),                  this.settingsG.AddText("x659 y357 c0x12abd1", "Build Exe (not implemented)")
+        this.buildDll                 := this.settingsG.AddButton("x631 y389 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_DLL", "")),                  this.settingsG.AddText("x659 y389 c0x12abd1", "Build Dll (not implemented)")
+        this.outputDataFormat_AHK     := this.settingsG.AddButton("x631 y421 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_AHK", "")),     this.settingsG.AddText("x659 y421 c0x12abd1", "Output data format [AHK]")
+        this.outputDataFormat_CPP_ARR := this.settingsG.AddButton("x631 y453 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_CPP_ARR", "")), this.settingsG.AddText("x659 y453 c0x12abd1", "Output data format [C++ Array]")
+        this.outputDataFormat_CPP_STR := this.settingsG.AddButton("x631 y485 w18 h18", IniRead(Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_CPP_STR", "")), this.settingsG.AddText("x659 y485 c0x12abd1", "Output data format [C++ String]")
+
 
 
         this.settingsG.AddText("x241 y249 w1100 h2 Background005343")
@@ -450,7 +452,8 @@ class GuiMcode {
         MCF_MCODE.CustomButton(this.buildExe, btnColors4*)
         MCF_MCODE.CustomButton(this.buildDll, btnColors4*)
         MCF_MCODE.CustomButton(this.outputDataFormat_AHK, btnColors4*)
-        MCF_MCODE.CustomButton(this.outputDataFormat_CPP, btnColors4*)
+        MCF_MCODE.CustomButton(this.outputDataFormat_CPP_ARR, btnColors4*)
+        MCF_MCODE.CustomButton(this.outputDataFormat_CPP_STR, btnColors4*)
 
         MCF_MCODE.CustomButton(this.saveLastCode, btnColors4*)
         MCF_MCODE.CustomButton(this.dynamicLinkingAuto, btnColors4*)
@@ -703,13 +706,26 @@ class GuiMcode {
             return 0
         })
 
+
         MultilineStr(str) {
             if (this.HasOwnProp("cf")) {
+                bytesPerLine := Max(1, Integer(this.multilineOutputLength.Text))
                 if (this.outputDataFormat_AHK.Text) {
                     mcode := this.cf.is64 ? 'x64 := "`n(`n' : 'x86 := "`n(`n'
-                    mcode .= RegExReplace(str, "(.{" Integer(this.multilineOutputLength.Text) "})", "$1`n") . '`n)"`n'
-                    return (mcode .= "ptr := GetMcodePtr(" (this.cf.is64 ? 'x64' : ', x86') ")")
-                } else if (this.outputDataFormat_CPP.Text) {
+                    mcode .= RegExReplace(str, "(.{" bytesPerLine "})", "$1`n") . '`n)"`n'
+                    return (mcode .= "ptr := " (this.buildAhkMcode.Text ? "GetMcodePtr(" : "GetShellCodePtr(") (this.cf.is64 ? 'x64' : ', x86') ")")
+                } else if (this.outputDataFormat_CPP_ARR.Text && !InStr(str, "|",, -1,)) {
+                    mcode := "const unsigned char " (this.cf.is64 ? "x64" : "x86") "[] = {`n    "
+                    byteCount := StrLen(str) // 2
+                    Loop byteCount {
+                        mcode .= "0x" SubStr(str, (A_Index - 1) * 2 + 1, 2)
+                        if (A_Index < byteCount) {
+                            mcode .= ","
+                            mcode .= Mod(A_Index, bytesPerLine) = 0 ? "`n    " : " "
+                        }
+                    }
+                    return mcode "`n};"
+                } else if (this.outputDataFormat_CPP_STR.Text && !InStr(str, "|",, -1,)) {
                     mcode := "const char* " (this.cf.is64 ? 'x64' : 'x86') " =`n"
                     mcode .= RegExReplace(str, "(.{1," Integer(this.multilineOutputLength.Text) "})", '"' '$1"`n')
                     return Trim(mcode, "`n") ";"
@@ -756,13 +772,14 @@ class GuiMcode {
             IniWrite(this.checkAutoUpdate.Text         != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "CHECK_AUTO_UPDATE")
             IniWrite(this.multilineOutputLength.Text, Const.GLOBAL_INI_FILE, "SETTINGS", "MULTILINE_OUTPUT_LENGTH")
 
-            IniWrite(this.buildAhkMcode.Text        != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_AHK_MCODE")
-            IniWrite(this.buildPICShellcode.Text    != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_PIC_SHELLCODE")
-            IniWrite(this.buildPICMcodeLibrary.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_PIC_MCODE_LIBRARY")
-            IniWrite(this.buildExe.Text             != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_EXE")
-            IniWrite(this.buildDll.Text             != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_DLL")
-            IniWrite(this.outputDataFormat_AHK.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_AHK")
-            IniWrite(this.outputDataFormat_CPP.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_CPP")
+            IniWrite(this.buildAhkMcode.Text            != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_AHK_MCODE")
+            IniWrite(this.buildPICShellcode.Text        != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_PIC_SHELLCODE")
+            IniWrite(this.buildPICMcodeLibrary.Text     != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_PIC_MCODE_LIBRARY")
+            IniWrite(this.buildExe.Text                 != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_EXE")
+            IniWrite(this.buildDll.Text                 != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "BUILD_DLL")
+            IniWrite(this.outputDataFormat_AHK.Text     != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_AHK")
+            IniWrite(this.outputDataFormat_CPP_ARR.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_CPP_ARR")
+            IniWrite(this.outputDataFormat_CPP_STR.Text != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "OUTPUT_DATA_FORMAT_CPP_STR")
 
             IniWrite(this.cFileMode.Text           != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "C_FILE_MODE")
             IniWrite(this.cppFileMode.Text         != "" ? "✔" : "", Const.GLOBAL_INI_FILE, "SETTINGS", "CPP_FILE_MODE")
@@ -828,8 +845,10 @@ class GuiMcode {
         this.buildPICMcodeLibrary.OnEvent("Click", (*) => (this.buildPICMcodeLibrary.Text := "✔", this.buildAhkMcode.Text := "", this.buildPICShellcode.Text := "", this.buildExe.Text := "", this.buildDll.Text := ""))
         this.buildExe.OnEvent("Click",             (*) => (this.buildExe.Text := "✔",             this.buildAhkMcode.Text := "", this.buildPICShellcode.Text := "", this.buildPICMcodeLibrary.Text := "", this.buildDll.Text := ""))
         this.buildDll.OnEvent("Click",             (*) => (this.buildDll.Text := "✔",             this.buildAhkMcode.Text := "", this.buildPICShellcode.Text := "", this.buildPICMcodeLibrary.Text := "", this.buildExe.Text := ""))
-        this.outputDataFormat_AHK.OnEvent("Click", (*) => (this.outputDataFormat_AHK.Text := "✔", this.outputDataFormat_CPP.Text := ""))
-        this.outputDataFormat_CPP.OnEvent("Click", (*) => (this.outputDataFormat_CPP.Text := "✔", this.outputDataFormat_AHK.Text := ""))
+        
+        this.outputDataFormat_AHK.OnEvent("Click",     (*) => (this.outputDataFormat_AHK.Text     := "✔", this.outputDataFormat_CPP_ARR.Text := "", this.outputDataFormat_CPP_STR.Text := ""))
+        this.outputDataFormat_CPP_ARR.OnEvent("Click", (*) => (this.outputDataFormat_CPP_ARR.Text := "✔", this.outputDataFormat_AHK.Text     := "", this.outputDataFormat_CPP_STR.Text := ""))
+        this.outputDataFormat_CPP_STR.OnEvent("Click", (*) => (this.outputDataFormat_CPP_STR.Text := "✔", this.outputDataFormat_AHK.Text     := "", this.outputDataFormat_CPP_ARR.Text := ""))
 
 
         ;####################################################### COFF info ######################################################
@@ -1166,7 +1185,7 @@ class GuiMcode {
         usePEparser           := this.useNewPEParser.Value
 
         buildFormat           := this.buildAhkMcode.Text ? 1 : this.buildPICShellcode.Text ? 2 : this.buildPICMcodeLibrary.Text ? 3 : this.buildExe.Text ? 4 : this.buildDll.Text ? 5 : 0
-        languageFormat        := this.outputDataFormat_AHK.Text ? "ahk" : this.outputDataFormat_CPP.Text ? "cpp" : "ahk"
+        languageFormat        := this.outputDataFormat_AHK.Text ? "ahk" : this.outputDataFormat_CPP_ARR.Text ? "cpp" : this.outputDataFormat_CPP_STR.Text ? "cpp" : "ahk"
         entryPoint            := Trim(this.userEntryPoint.Text, A_Space)
 
         ; Если src это COFF (.o|.obj), то линковщик соберет Mcode без зависимостей от компилятора. COFF копируеться - задел на будущее...
