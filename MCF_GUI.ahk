@@ -713,7 +713,9 @@ class GuiMcode {
                 if (this.outputDataFormat_AHK.Text) {
                     mcode := this.cf.is64 ? 'x64 := "`n(`n' : 'x86 := "`n(`n'
                     mcode .= RegExReplace(str, "(.{" bytesPerLine "})", "$1`n") . '`n)"`n'
-                    return (mcode .= "ptr := " (this.buildAhkMcode.Text ? "GetMcodePtr(" : "GetShellCodePtr(") (this.cf.is64 ? 'x64' : ', x86') ")")
+                    mcode .= "ptr := " (this.buildAhkMcode.Text ? "GetMcodePtr(" : "GetShellCodePtr(") (this.cf.is64 ? 'x64' : ', x86') ")"
+                    mcode .= this.buildPICMcodeLibrary.Text ? '`nDllCall(ptr + 0x40, "Int") `; stub init (PIC Shellcode Library)' : this.buildPICShellcode.Text ? '`nDllCall(ptr + 0x40, "Int") `; call shellcode (PIC Shellcode)' : ""
+                    return mcode
                 } else if (this.outputDataFormat_CPP_ARR.Text && !InStr(str, "|",, -1,)) {
                     mcode := "const unsigned char " (this.cf.is64 ? "x64" : "x86") "[] = {`n    "
                     byteCount := StrLen(str) // 2
