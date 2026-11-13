@@ -71,6 +71,11 @@ class Blob {
 
 
     Build() {
+        if (this.IAT.Length == 0) {
+            this.Payload_RVA := 0
+            return this.mcodeBuffer ; Если Mcode и так PIC, то нет смысла тянуть стаб
+        }
+
         FinalBlob := Buffer(this.totalSize, 0)
         RtlMoveMemory(FinalBlob.Ptr, this.stubBuffer.Ptr, this.stubBuffer.size)
         NumPut("UInt", 0x3153434D,            ; MAGIC (MCS1)
@@ -146,13 +151,5 @@ class Blob {
                 })
             }
         }
-    }
-
-
-    MultilineStr(str, is64 := true) {
-        s := is64 ? 'x64 := "`n(`n' : 'x86 := "`n(`n'
-        s .= RegExReplace(str, "(.{" Integer(176) "})", "$1`n") . '`n)"`n'
-        s .= "ptr := GetMcodePtr(" (is64 ? 'x64' : ', x86') ")"
-        return s
     }
 }
