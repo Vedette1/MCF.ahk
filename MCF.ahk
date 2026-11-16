@@ -533,11 +533,11 @@ class COFF {
             suffix1 := pos1 ? SubStr(name1, pos1 + 1) : ""
             suffix2 := pos2 ? SubStr(name2, pos2 + 1) : ""
 
-            cmp := StrCompare(prefix1, prefix2)
+            cmp := StrCompare(prefix1, prefix2, true)
             if (cmp != 0)
                 return cmp
 
-            return StrCompare(suffix1, suffix2)
+            return StrCompare(suffix1, suffix2, true)
         }
 
         indices := []
@@ -663,7 +663,6 @@ class COFF {
     Linker() {
         layout               := []
         currentOffset        := 0x0
-        IAT                  := "|"
         mcodeBuildRules      := {IAT: [], VA: []} ; Все даные вроде IAT, VA релокаций, и тд. которые будут использоваться парсером для генерации Mcode под X формат.
         unresolvedSymbolsNew := []
         this.shortDbgInfo    := ""
@@ -1101,7 +1100,7 @@ class COFF {
                     if (dllExport.Has(exp.func)) {
                         if (writeIAT) {
                             exportFunc := this.useOrdinals ? dllExport[exp.func].Ordinal : exp.func
-                            mcodeBuildRules.IAT.Push({Dll: dll, ExportFunc: exp.func, PatchOffset: exp.patchOffset, Disp: disp})
+                            mcodeBuildRules.IAT.Push({Dll: dll, ExportFunc: exportFunc, PatchOffset: exp.patchOffset, Disp: disp})
                         }
                         this.dbgLogInfo .= "`t[OK] Symbol '" exp.func " [" dllExport[exp.func].Ordinal "]' found in " dll ". Added to IAT.`n"
                         return true
@@ -1409,31 +1408,37 @@ class MCF_Builder {
             RtlMoveMemory(FinalBlob.Ptr + this.stubBuffer.size, this.mcodeBuffer.Ptr, this.mcodeSize)
 
             current_pool_offset := 0
+            poolOffsets := Map()
             for i, imp in this.buildRulesObj.IAT {
-                o     := this.imp_RVA + ((i - 1) * MCF_Builder.Blob.SIZEOF_IMP_REC)
-                isOrd := IsInteger(imp.ExportFunc)
+                o := this.imp_RVA + ((i - 1) * MCF_Builder.Blob.SIZEOF_IMP_REC)
 
-                NumPut("UInt", current_pool_offset, FinalBlob.Ptr + 0 + o)
-                written_bytes := StrPut(imp.Dll, FinalBlob.Ptr + this.pool_RVA + current_pool_offset, "CP0")
-                current_pool_offset += written_bytes
+                if (!poolOffsets.Has(imp.Dll)) {
+                    StrPut(imp.Dll, FinalBlob.Ptr + this.pool_RVA + current_pool_offset, "CP0")
+                    poolOffsets[imp.Dll] := current_pool_offset
+                    current_pool_offset += StrPut(imp.Dll, "CP0")
+                }
+                NumPut("UInt", poolOffsets[imp.Dll], FinalBlob.Ptr + 0 + o)
 
-                if (isOrd) {
+                if (IsInteger(imp.ExportFunc)) {
                     NumPut("UInt", imp.ExportFunc, FinalBlob.Ptr + 4 + o)
                 } else {
-                    NumPut("UInt", current_pool_offset, FinalBlob.Ptr + 4 + o)
-                    written_bytes := StrPut(imp.ExportFunc, FinalBlob.Ptr + this.pool_RVA + current_pool_offset, "CP0")
-                    current_pool_offset += written_bytes
+                    if (!poolOffsets.Has(imp.ExportFunc)) {
+                        StrPut(imp.ExportFunc, FinalBlob.Ptr + this.pool_RVA + current_pool_offset, "CP0")
+                        poolOffsets[imp.ExportFunc] := current_pool_offset
+                        current_pool_offset += StrPut(imp.ExportFunc, "CP0")
+                    }
+                    NumPut("UInt", poolOffsets[imp.ExportFunc], FinalBlob.Ptr + 4 + o)
                 }
 
                 NumPut("UInt",  imp.PatchOffset, FinalBlob.Ptr + 8  + o)
                 NumPut("UInt",  imp.Disp,        FinalBlob.Ptr + 12 + o)
-                NumPut("UChar", isOrd,           FinalBlob.Ptr + 16 + o)
+                NumPut("UChar", IsInteger(imp.ExportFunc), FinalBlob.Ptr + 16 + o)
             }
 
             for i, va_data in this.buildRulesObj.VA {
                 o := this.VA_RVA + ((i - 1) * MCF_Builder.Blob.SIZEOF_VA_REC)
                 NumPut("UInt",  va_data.Offset, FinalBlob.Ptr + 0 + o)
-                NumPut("UChar", va_data.Size,        FinalBlob.Ptr + 4 + o)
+                NumPut("UChar", va_data.Size,   FinalBlob.Ptr + 4 + o)
             }
 
             return FinalBlob
@@ -1442,10 +1447,15 @@ class MCF_Builder {
 
         GetStringPoolSize() {
             stringPoolSize := 0
+            seen := Map()
             for imp in this.buildRulesObj.IAT {
-                stringPoolSize += StrPut(imp.Dll, "CP0")
-                if (!IsInteger(imp.ExportFunc)) { ; НЕ ординал
+                if (!seen.Has(imp.Dll)) {
+                    stringPoolSize += StrPut(imp.Dll, "CP0")
+                    seen[imp.Dll] := true
+                }
+                if (!IsInteger(imp.ExportFunc) && !seen.Has(imp.ExportFunc)) {
                     stringPoolSize += StrPut(imp.ExportFunc, "CP0")
+                    seen[imp.ExportFunc] := true
                 }
             }
             return stringPoolSize
