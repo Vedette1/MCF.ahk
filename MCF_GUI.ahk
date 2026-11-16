@@ -711,13 +711,13 @@ class GuiMcode {
             if (this.HasOwnProp("cf")) {
                 bytesPerLine := Max(1, Integer(this.multilineOutputLength.Text))
                 if (this.outputDataFormat_AHK.Text) {
-                    mcode := this.cf.is64 ? 'x64 := "`n(`n' : 'x86 := "`n(`n'
+                    mcode := this.cf.coffObj.is64 ? 'x64 := "`n(`n' : 'x86 := "`n(`n'
                     mcode .= RegExReplace(str, "(.{" bytesPerLine "})", "$1`n") . '`n)"`n'
-                    mcode .= "ptr := " (this.buildAhkMcode.Text ? "GetMcodePtr(" : "GetShellCodePtr(") (this.cf.is64 ? 'x64' : ', x86') ")"
-                    mcode .= this.buildPICMcodeLibrary.Text ? '`nDllCall(ptr + 0x40, "Int") `; stub init (PIC Shellcode Library)' : this.buildPICShellcode.Text ? '`nDllCall(ptr + 0x40, "Int") `; call shellcode (PIC Shellcode)' : ""
+                    mcode .= "ptr := " (this.buildAhkMcode.Text ? "GetMcodePtr(" : "GetShellCodePtr(") (this.cf.coffObj.is64 ? 'x64' : ', x86') ")"
+                    mcode .= this.buildPICMcodeLibrary.Text ? '`nDllCall(ptr + 0x40, "Int") `; stub init (PIC Mcode Library)' : this.buildPICShellcode.Text ? '`nDllCall(ptr + 0x40, "Int") `; call shellcode (PIC Shellcode)' : ""
                     return mcode
                 } else if (this.outputDataFormat_CPP_ARR.Text && !InStr(str, "|",, -1,)) {
-                    mcode := "const unsigned char " (this.cf.is64 ? "x64" : "x86") "[] = {`n    "
+                    mcode := "const unsigned char " (this.cf.coffObj.is64 ? "x64" : "x86") "[] = {`n    "
                     byteCount := StrLen(str) // 2
                     Loop byteCount {
                         mcode .= "0x" SubStr(str, (A_Index - 1) * 2 + 1, 2)
@@ -728,7 +728,7 @@ class GuiMcode {
                     }
                     return mcode "`n};"
                 } else if (this.outputDataFormat_CPP_STR.Text && !InStr(str, "|",, -1,)) {
-                    mcode := "const char* " (this.cf.is64 ? 'x64' : 'x86') " =`n"
+                    mcode := "const char* " (this.cf.coffObj.is64 ? 'x64' : 'x86') " =`n"
                     mcode .= RegExReplace(str, "(.{1," Integer(this.multilineOutputLength.Text) "})", '"' '$1"`n')
                     return Trim(mcode, "`n") ";"
                 }
@@ -1271,8 +1271,9 @@ class GuiMcode {
                     }
                 } else newStaticLinking := staticLinking
 
-                this.cf := COFF(path, importDll, ignoreSec, fullOffsetTable, dynamicLinking, newStaticLinking, dynamicSubstitution, staticSubstitution, demangleLvl, useOrdinals, usePEparser, buildFormat, languageFormat, entryPoint)
-                this.mcode := this.cf.Linker()
+
+                this.cf := MCF_Builder(path, importDll, ignoreSec, fullOffsetTable, dynamicLinking, newStaticLinking, dynamicSubstitution, staticSubstitution, useOrdinals, usePEparser, demangleLvl, languageFormat, entryPoint)
+                this.mcode := this.cf.AutoBuild(buildFormat)
 
                 ; Визуальная подсветка самой короткой строки MCode.
                 minLen := Min(StrLen(this.mcode.hex), StrLen(this.mcode.base64), StrLen(this.mcode.compress))
@@ -1322,7 +1323,7 @@ class GuiMcode {
             } catch as er {
                 this.Error_log("ERORR Linker:`n" er.Message " [" er.What "]`n" er.Line " " er.File "`nFor more information about the error, see the log.")
                 try FileDelete(Const.GLOBAL_MCF_LINKER_LOG)
-                FileAppend(this.cf.dbgLogInfo, Const.GLOBAL_MCF_LINKER_LOG, "")
+                FileAppend(this.cf.coffObj.dbgLogInfo, Const.GLOBAL_MCF_LINKER_LOG, "")
             }
         }
     }
