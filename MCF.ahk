@@ -518,38 +518,38 @@ class COFF {
     }
 
 
+    ; Сравнение имён секций: сначала по префиксу (до $), затем по суффиксу (после $). Секции без $ считаются как префикс с пустым суффиксом (идут первыми в группе).
+    CompareSectionNames(name1, name2) {
+        pos1 := InStr(name1, "$")
+        pos2 := InStr(name2, "$")
+
+        if (pos1 == 0 && pos2 == 0)
+            return StrCompare(name1, name2, true)
+
+        prefix1 := pos1 ? SubStr(name1, 1, pos1 - 1) : name1
+        prefix2 := pos2 ? SubStr(name2, 1, pos2 - 1) : name2
+        suffix1 := pos1 ? SubStr(name1, pos1 + 1) : ""
+        suffix2 := pos2 ? SubStr(name2, pos2 + 1) : ""
+
+        cmp := StrCompare(prefix1, prefix2, true)
+        if (cmp != 0)
+            return cmp
+
+        return StrCompare(suffix1, suffix2, true)
+    }
+
+
     ; Возвращает массив индексов секций (1-based), отсортированных с учётом $-суффиксов. Секции из sectionFilter (useless) не включаются.
     GetSortedSectionIndices() {
-        ; Сравнение имён секций: сначала по префиксу (до $), затем по суффиксу (после $). Секции без $ считаются как префикс с пустым суффиксом (идут первыми в группе).
-        CompareSectionNames(name1, name2) {
-            pos1 := InStr(name1, "$")
-            pos2 := InStr(name2, "$")
-
-            if (pos1 == 0 && pos2 == 0)
-                return StrCompare(name1, name2)
-
-            prefix1 := pos1 ? SubStr(name1, 1, pos1 - 1) : name1
-            prefix2 := pos2 ? SubStr(name2, 1, pos2 - 1) : name2
-            suffix1 := pos1 ? SubStr(name1, pos1 + 1) : ""
-            suffix2 := pos2 ? SubStr(name2, pos2 + 1) : ""
-
-            cmp := StrCompare(prefix1, prefix2, true)
-            if (cmp != 0)
-                return cmp
-
-            return StrCompare(suffix1, suffix2, true)
-        }
-
         indices := []
         for i, sec in this.sections {
             if (!this.sectionFilter[i])
                 indices.Push(i)
         }
-        ; Bubble sort по CompareSectionNames
         n := indices.Length
         Loop n - 1 {
             Loop n - A_Index {
-                if (CompareSectionNames(this.sections[indices[A_Index]].Name, this.sections[indices[A_Index + 1]].Name) > 0) {
+                if (this.CompareSectionNames(this.sections[indices[A_Index]].Name, this.sections[indices[A_Index + 1]].Name) > 0) {
                     tmp := indices[A_Index]
                     indices[A_Index] := indices[A_Index + 1]
                     indices[A_Index + 1] := tmp
@@ -557,6 +557,131 @@ class COFF {
             }
         }
         return indices
+    }
+
+
+    ; Разбор имени секции инициализации/терминации. "" = не таблица.
+    ;   type      "CTOR" | "DTOR"
+    ;   family    "CRT" (MSVC) | "ARRAY" (.init_array/.fini_array) | "LEGACY" (.ctors/.dtors)
+    ;   famRank   группировка семейств (нельзя смешивать правила обхода)
+    ;   layoutKey числовой ключ "как разложил бы ld" (меньше = ниже адрес)
+    ;   sortKey   строковый ключ для MSVC
+    ;   prio      нормализованный init-приоритет (для лога/отладки)
+    GetInitFiniInfo(secName) {
+        ; --- MSVC: .CRT$XI* (C), .CRT$XC* (C++), .CRT$XP* / .CRT$XT* (терминаторы) ---
+        if (secName ~= "^\.CRT\$X") {
+            suffix := SubStr(secName, 7)            ; "CU", "IA", "PA", "CZ"...
+            switch SubStr(suffix, 1, 1) {
+                case "I": type := "CTOR", grp := "0"   ; C-инициализаторы раньше C++
+                case "C": type := "CTOR", grp := "1"
+                case "P": type := "DTOR", grp := "0"
+                case "T": type := "DTOR", grp := "1"
+                default: return ""                     ; .CRT$XL* (TLS), .CRT$XD* - не таблицы
+            }
+            return {type: type, family: "CRT", famRank: 1, layoutKey: 0, sortKey: grp suffix, prio: 65535}
+        }
+        ; --- GCC / Clang ---
+        if (secName ~= "^\.init_array(\.|$)")
+            base := ".init_array", type := "CTOR", family := "ARRAY"
+        else if (secName ~= "^\.fini_array(\.|$)")
+            base := ".fini_array", type := "DTOR", family := "ARRAY"
+        else if (secName ~= "^\.ctors(\.|$)")
+            base := ".ctors",      type := "CTOR", family := "LEGACY"
+        else if (secName ~= "^\.dtors(\.|$)")
+            base := ".dtors",      type := "DTOR", family := "LEGACY"
+        else
+            return ""
+
+        tail := SubStr(secName, StrLen(base) + 1)   ; "" либо ".NNNNN"
+        if (tail == "") {
+            prio      := 65535
+            ; ГЛАВНОЕ ПРАВИЛО: у LEGACY plain идёт ПЕРЕД нумерованными, у ARRAY - ПОСЛЕ.
+            layoutKey := (family == "LEGACY") ? -1 : 65536
+        } else {
+            if !(SubStr(tail, 2) ~= "^\d+$")
+                return ""                            ; .ctors$zzz / прочий мусор - не таблица
+            num       := Integer(SubStr(tail, 2))
+            prio      := (family == "ARRAY") ? num : 65535 - num
+            layoutKey := num
+        }
+        return {type: type, family: family, famRank: (family == "ARRAY" ? 2 : 3), layoutKey: layoutKey, sortKey: "", prio: prio}
+    }
+
+    ; Порядок "как в памяти у настоящего линкера": семейство -> ключ секции -> порядок объектов -> индекс секции
+    CompareInitFini(a, b) {
+        if (a.Info.famRank != b.Info.famRank)
+            return a.Info.famRank < b.Info.famRank ? -1 : 1
+        if (a.Info.family == "CRT") {
+            c := StrCompare(a.Info.sortKey, b.Info.sortKey, true)
+            if (c != 0)
+                return c
+        } else if (a.Info.layoutKey != b.Info.layoutKey) {
+            return a.Info.layoutKey < b.Info.layoutKey ? -1 : 1
+        }
+        if (a.ObjIdx != b.ObjIdx)
+            return a.ObjIdx < b.ObjIdx ? -1 : 1
+        return a.SecIdx < b.SecIdx ? -1 : (a.SecIdx > b.SecIdx ? 1 : 0)
+    }
+
+
+    BuildInitFiniLists(mcode, initFiniSections) {
+        ptrSize := this.is64 ? 8 : 4
+        ptrType := this.is64 ? "Int64" : "Int"
+
+        ; 1: раскладываем секции в порядке настоящего линкера
+        n := initFiniSections.Length
+        if (n > 1) {
+            Loop n - 1 {
+                Loop n - A_Index {
+                    a := initFiniSections[A_Index], b := initFiniSections[A_Index + 1]
+                    if (this.CompareInitFini(a, b) > 0) {
+                        initFiniSections[A_Index] := b
+                        initFiniSections[A_Index + 1] := a
+                    }
+                }
+            }
+        }
+
+        ; 2: читаем УЖЕ прорелоцированные указатели. В буфере лежит смещение внутри Mcode.
+        groups := Map()
+        for item in initFiniSections {
+            key := item.Info.type "|" item.Info.family
+            if (!groups.Has(key))
+                groups[key] := []
+            arr := groups[key]
+            Loop item.Size // ptrSize {
+                slot := item.Offset + (A_Index - 1) * ptrSize
+                val  := NumGet(mcode, slot, ptrType)
+                if (val == 0 || val == -1) {   ; NULL/-1 маркеры crtbegin/crtend, .CRT$XCA/XCZ, дырки выравнивания
+                    this.dbgLogInfo .= "`t[" item.Info.type "] skip empty slot at 0x" Format("{:X}", slot) "`n"
+                    continue
+                }
+                arr.Push(val)
+                this.dbgLogInfo .= "`t[" item.Info.type "] '" item.Section.Name "' -> func 0x" Format("{:X}", val) " (" item.OriginKey ")`n"
+            }
+        }
+
+        ; 3: направление обхода. Реверс - ВСЕГО списка семейства, не отдельных секций.
+        res := {Ctors: [], Dtors: []}
+        for _, fam in ["CRT", "ARRAY", "LEGACY"] {
+            for _, type in ["CTOR", "DTOR"] {
+                key := type "|" fam
+                if (!groups.Has(key))
+                    continue
+                arr := groups[key]
+                rev := (fam == "LEGACY" && type == "CTOR") || (fam == "ARRAY" && type == "DTOR")
+                dst := (type == "CTOR") ? res.Ctors : res.Dtors
+                if (rev) {
+                    Loop arr.Length
+                        dst.Push(arr[arr.Length - A_Index + 1])
+                } else {
+                    for v in arr
+                        dst.Push(v)
+                }
+                this.dbgLogInfo .= "`t[" type "/" fam "] " arr.Length " entries, walk " (rev ? "REVERSED" : "forward") "`n"
+            }
+        }
+        return res
     }
 
 
@@ -663,7 +788,7 @@ class COFF {
     Linker() {
         layout               := []
         currentOffset        := 0x0
-        mcodeBuildRules      := {IAT: [], VA: []} ; Все даные вроде IAT, VA релокаций, и тд. которые будут использоваться парсером для генерации Mcode под X формат.
+        mcodeBuildRules      := {IAT: [], VA: [], Ctors: [], Dtors: []} ; Все даные вроде IAT, VA релокаций, и тд. которые будут использоваться парсером для генерации Mcode под X формат.
         unresolvedSymbolsNew := []
         this.shortDbgInfo    := ""
         this.dbgLogInfo      := "[Layout] Analyzing and merging sections:`n"
@@ -693,8 +818,7 @@ class COFF {
                 if (symbol.SectionIndex > 0 && !coffObj.sectionFilter[symbol.SectionIndex]) {
                     knownSymbols[symbol.Name] := true
                 } else if (symbol.SectionIndex == 0 && symbol.Value > 0 && !this.CleanSymbolName(symbol.Name).isImport) {
-                    ; COMMON - это тоже определение (пусть и слабое), из-за него не вытаскиваем член из .lib
-                    knownSymbols[symbol.Name] := true
+                    knownSymbols[symbol.Name] := true ; COMMON - это тоже определение (пусть и слабое), из-за него не вытаскиваем член из .lib
                 }
             }
 
@@ -860,10 +984,13 @@ class COFF {
         ; =================================================================================================
         ; 3: Разметка памяти (Layout), регистрация символов и сбор релокаций
         ; =================================================================================================
-        objLocalOffsets := Map() ; ObjPtr(coffObj) -> Map(secIdx -> globalOffset)
+        objLocalOffsets  := Map()  ; ObjPtr(coffObj) -> Map(secIdx -> globalOffset)
+        initFiniSections := []    ; Секции конструкторов и деструкторов
+        objIdx           := 0
 
-        ; Шаг 3.1: Выделяем смещения (currentOffset) только для выживших секций
+        ; 3.1: Выделяем смещения (currentOffset) только для выживших секций
         for objWrapper in allObjects {
+            objIdx++
             coffObj := objWrapper.coff
             this.dbgLogInfo .= "`n[Obj] Processing object: " objWrapper.originKey "`n"
             localToGlobalOffsets := Map()
@@ -886,6 +1013,11 @@ class COFF {
                 localToGlobalOffsets[i] := currentOffset
                 layout.Push({CoffObj: coffObj, Section: sec, OriginalIndex: i, NewOffset: currentOffset})
                 this.dbgLogInfo .= "`t[OK] Section '" sec.Name "' merged. New offset: 0x" Format("{:X}", currentOffset) ", Size: " secSize "`n"
+
+                if (info := this.GetInitFiniInfo(sec.Name)) {
+                    initFiniSections.Push({CoffObj: coffObj, Section: sec, SecIdx: i, ObjIdx: objIdx, Offset: currentOffset, Size: secSize, Info: info, OriginKey: objWrapper.originKey})
+                    this.dbgLogInfo .= "`t[" info.type "] Table '" sec.Name "' at 0x" Format("{:X}", currentOffset) ", size " secSize ", prio " info.prio "`n"
+                }
 
                 ; Если это победитель COMDAT — запоминаем его финальное смещение в реестре
                 if (coffObj.comdatSections.Has(i) && coffObj.comdatSections[i].Selection != COFF.IMAGE_COMDAT_SELECT_ASSOCIATIVE) {
@@ -1063,6 +1195,10 @@ class COFF {
             }
         }
 
+        initFini := this.BuildInitFiniLists(mcode, initFiniSections)
+        mcodeBuildRules.Ctors := initFini.Ctors
+        mcodeBuildRules.Dtors := initFini.Dtors
+
         ;============================================ кастомный мини IAT + VA reloc ============================================
         this.dbgLogInfo .= "`n[IAT] Generating Import Address Table (IAT):`n"
         loadedDlls := Map()
@@ -1180,6 +1316,22 @@ class COFF {
             }
         }
 
+        if (initFiniSections.Length) {
+            filtered := []
+            for va in this.VAreloc {
+                skip := false
+                for item in initFiniSections {
+                    if (va.offset >= item.Offset && va.offset < item.Offset + item.Size) {
+                        skip := true
+                        break
+                    }
+                }
+                if (!skip)
+                    filtered.Push(va)
+            }
+            this.VAreloc := filtered
+        }
+
         if (this.VAreloc.Length) {
             this.dbgLogInfo .= "`n[IAT] Adding VA relocations:`n"
             for va in this.VAreloc {
@@ -1189,9 +1341,15 @@ class COFF {
         }
 
         ;============================================ таблица символов ============================================
+        ctorSet := Map(), dtorSet := Map()
+        for off in mcodeBuildRules.Ctors
+            ctorSet[off] := true
+        for off in mcodeBuildRules.Dtors
+            dtorSet[off] := true
+
         this.exportedSymbols := Map()
         for i, symbol in this.symbolsMap {
-            if (symbol.SectionIndex > 0 && (symbol.StorageClass == 2) || this.fullOffsetTable) {
+            if (symbol.SectionIndex > 0 && ((symbol.StorageClass == 2) || this.fullOffsetTable)) {
                 secOffset := -1
                 for item in layout {
                     if (item.OriginalIndex == symbol.SectionIndex && ObjPtr(item.CoffObj) = ObjPtr(this)) {
@@ -1199,9 +1357,31 @@ class COFF {
                         break
                     }
                 }
-                
+
                 if (secOffset != -1) {
-                    this.exportedSymbols[i] := {symbol: symbol.Name, offset: secOffset + symbol.Value, opt: symbol.StorageClass != 2 ? "[dispensable] | " : ""}
+                    finalOffset := secOffset + symbol.Value
+                    sec         := this.sections[symbol.SectionIndex]
+                    isCodeSec   := (sec.Characteristics & 0x00000020) != 0 ; IMAGE_SCN_CNT_CODE
+
+                    ; тип символа
+                    if (symbol.StorageClass == 104 || (symbol.StorageClass == 3 && symbol.Value == 0 && symbol.Name == sec.Name)) {
+                        tag := "[section] | "
+                    } else if (ctorSet.Has(finalOffset)) {
+                        tag := "[ctor] | "
+                    } else if (dtorSet.Has(finalOffset)) {
+                        tag := "[dtor] | "
+                    } else if ((symbol.Type >> 4) == 2 || (isCodeSec && symbol.StorageClass == 2)) {
+                        tag := "[func] | "
+                    } else if (!isCodeSec) {
+                        tag := "[global] | "
+                    } else {
+                        tag := "[label] | "
+                    }
+
+                    if (symbol.StorageClass != 2 && tag != "[ctor] | " && tag != "[dtor] | ")
+                        tag := "[local] " tag
+
+                    this.exportedSymbols[i] := {symbol: symbol.Name, offset: finalOffset, opt: tag}
                 }
             }
         }
@@ -1209,12 +1389,13 @@ class COFF {
         for symIdx, symbol in this.symbolsMap {
             if (symbol.SectionIndex == 0 && symbol.StorageClass == 2 && this.commonSymbols.Has(symbol.Name)) {
                 info := this.commonSymbols[symbol.Name]
-                this.exportedSymbols[symIdx] := {symbol: symbol.Name, offset: info.offset, opt: "[common] | "}
+                this.exportedSymbols[symIdx] := {symbol: symbol.Name, offset: info.offset, opt: "[common] [global] | "}
             }
         }
 
-        this.dbgLogInfo .= "`n[Linker] Linking process completed " . (this.shortDbgInfo == "" ? "successfully, most likely no errors!`n" : "with errors. Check main GUI for potential issues...`n")
 
+        this.dbgLogInfo .= "`n[Linker] Linking process completed " . (this.shortDbgInfo == "" ? "successfully, most likely no errors!`n" : "with errors. Check main GUI for potential issues...`n")
+        this.dbgLogInfo .= JSON.stringify(mcodeBuildRules, 4)
         return {Mcode: mcode, McodeBuildRules: mcodeBuildRules}
     }
 
@@ -1316,152 +1497,7 @@ class COFF {
 }
 
 
-; Класс обертка над "COFF". Отвечает за сборку Mcode в целом, и парсинг данных под X вывод.
-class MCF_Builder {
-    class Blob {
-        static SIZEOF_BLOB_HDR := 64
-        static SIZEOF_IMP_REC  := 17
-        static SIZEOF_VA_REC   := 5
-
-        ; MCF 1.0.7
-        ; TDM-GCC 10.3.0
-        ; -m64 -Os -fPIC -nostdlib -fno-ident -fomit-frame-pointer -fno-stack-protector -fno-asynchronous-unwind-tables -falign-functions=1 -falign-jumps=1 -falign-loops=1 -Wl,--build-id=none
-        ; offset["sc_main"] := ptr + 0x100 ;
-        ; offset["sc_start"] := ptr + 0x0 ;
-        static stub_x64 := "
-        (
-        00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e800000000594883e945e9a000000031c088140148ffc048
-        c1ea084883f80875f031c0448844010848ffc049c1e8084883f80875eec38b413c4989d08b94018800000031c085d274654801ca575653448b4a208b7a184901c939c7764b458b1c814531d24901cb4489d3418a341b418a
-        1c184084f6740a4038de752741ffc2ebe684db751e448b42244801c04801c8460fb704008b421c4a8d14818b04024801c8eb0748ffc0ebb131c05b5e5fc3c34157415641554154555756534883ec7881394d4353310f857f
-        0100008b41044531e44889cb83e0018944242c0f85400100008b411c4c8d7c24608b691049b865006c003300320048ba6b00650072006e008b71248b7918448b61204c89f989442448e8f9feffff65488b04256000000048
-        8b40184c8d4020488b40204885c00f841f0100004939c00f8416010000668378480f76214c8b485031d266418b0c1183c92066413b0c17750c4883c2024883fa1075e7eb05488b00ebc14c8b68204d85ed0f84dc0000004c
-        8d54245041b86172794148ba4c6f61644c6962724c89d1e87bfeffff4c89f949b8646472657373000048ba47657450726f6341e85ffeffff4c89d24c89e9e87bfeffff4c89fa4989c6e870feffff4989c74d85f60f846e01
-        00004885c00f846501000089f84189e94801de4531ed48894424384a8d04234a8d2c0b4531e448894424304183caff31c944396b0877578b4c24488b44242c39430c0f87ff0000004585e47504834b04018b432885c00f84
-        1a0100004585e40f85110100004883c4784801d85b5e5f5d415c415d415e415fffe04183ccffe9f300000041bcfeffffffe9e80000004489ef486bff1148037c24384801df8b074439d0741089c148034c243041ffd6448b
-        174889c14885c974328b4704488b542430448954244c48894c24404801c2807f1000480f45d041ffd7488b4c2440448b54244c4885c04889c2750541ffc4eb4f8b47084801e8448a48ff458d59184180fb01772566c706ff
-        254989f34883c610c746f200000000488956f68b570c4801c24929d3448918eb164889168b570c4989f34883c6084801c24929d344891841ffc5e9eafeffff8b44242c488d04804801c84801d88b104801ea807804087505
-        48012aeb02012aff44242ce9cbfeffff41bcfdffffff4883c4784489e05b5e5f5d415c415d415e415fc3909090909090
-        )"
-
-        ; MCF 1.0.7
-        ; TDM-GCC 10.3.0
-        ; -m32 -Os -fPIC -nostdlib -fno-ident -fomit-frame-pointer -fno-stack-protector -fno-asynchronous-unwind-tables -falign-functions=1 -falign-jumps=1 -falign-loops=1 -Wl,--build-id=none
-        ; offset["_sc_main"] := ptr + 0x105 ; 
-        ; offset["sc_start"] := ptr + 0x0 ; 
-        static stub_x86 := "
-        (
-        00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e8000000005883e84550e8b600000083c404c35756538b74
-        241089c389d08b7c241489ca31c988040b410facd008c1ea0883f90875f031c089f20facfe088854030840c1ef0883f80875ed5b5e5fc35589d557565383ec0c8b503c8b74107885f6745801c631d28b4e208b7e1801c189
-        3c24894c24083b142474408b4c240831ff8b1c9101c3895c24048b5c24048a4c3d008a1c3b84db740738cb751b47ebea84c9751401d201c20356240fb7128d149003561c0302eb0542ebbb31c083c40c5b5e5f5dc3555756
-        5383ec6c8bac2480000000817d004d4353310f859f0100008b450431ff83e001894424180f856f0100008b45108d5c2450ba6b006500b972006e00894424108b4524894424148b4518894424208b451c894424348b4520c7
-        042465006c00c7442404330032008944242489d8e8dafeffff64a1300000008b400c8d701c8b401c85c00f843701000039c60f842f010000668378280f761a8b782c31d2668b0c5783c920663b0c5375084283fa0875edeb
-        048b00ebcb8b701085f60f84ff000000c7042461727941ba4c6f6164b94c6962728d442440c744240400000000e869feffffc7042464647265b9726f634189d8c744240473730000ba47657450e849feffff8d54244089f0
-        e87afeffff89da8944242c89f0e86dfeffff837c242c00894424300f845801000085c00f84500100008b4424108b5c2420c7442420ffffffff31ff01e801eb894424108b442414c74424140000000001e88944241c8b4424
-        24c74424240000000001e8894424288b44242439450877518b4c24348b44241031d201e98b74241839750c0f87cb00000085ff7504834d04018b452885c00f84e200000085ff0f85da00000083c46c01e85b5e5f5dffe083
-        cfffe9c7000000bffeffffffe9bd0000008b033b4424207418034424288904248b44242cffd051894424148b0389442420837c24140074278b53048b44242801d0807b10000f45c2894424048b4424148904248b442430ff
-        d0525285c0750347eb368b7424100373088a56ff83c21880fa0177198b4b0cc744243c0000000001f1894c24382b4424388906eb0b8b4c241c8344241c048901ff44242483c311e913ffffff8b5c24100319807904087507
-        0103115304eb068b7424100133ff44241883c105e903ffffffbffdffffff83c46c89f85b5e5f5dc3
-        )"
-
-
-        __New(mcodeBuffer, buildRulesObj, is64 := true, entryPoint := 0) {
-            this.mcodeBuffer      := mcodeBuffer
-            this.mcodeSize        := mcodeBuffer.Size
-            this.buildRulesObj    := buildRulesObj
-            this.VA_size          := is64 ? 8 : 4
-            this.entryPoint       := entryPoint
-
-            this.stubBuffer       := Binary.StringToBinary(RegExReplace(is64 ? MCF_Builder.Blob.stub_x64 : MCF_Builder.Blob.stub_x86, "\s+"), 12)
-            this.importCount      := this.buildRulesObj.IAT.Length
-            this.VACount          := this.buildRulesObj.VA.Length
-            this.IATSize          := this.importCount * (is64 ? 16 : 4)
-            this.imp_RVA          := this.stubBuffer.size + this.mcodeSize
-            this.VA_RVA           := this.imp_RVA + (this.importCount * MCF_Builder.Blob.SIZEOF_IMP_REC)
-            this.pool_RVA         := this.VA_RVA + (this.VACount * MCF_Builder.Blob.SIZEOF_VA_REC)
-            this.IAT_RVA          := this.pool_RVA + this.GetStringPoolSize()
-            this.totalSize        := this.IAT_RVA + this.IATSize
-            this.Payload_RVA      := this.stubBuffer.size ; DllCall(Ptr + Payload_RVA + offset)
-        }
-
-
-        Build() {
-            if (this.buildRulesObj.IAT.Length == 0 && this.buildRulesObj.VA.Length == 0) {
-                this.Payload_RVA := 0
-                return this.mcodeBuffer ; Если Mcode и так PIC, то нет смысла тянуть стаб
-            }
-
-            FinalBlob := Buffer(this.totalSize, 0)
-            RtlMoveMemory(FinalBlob.Ptr, this.stubBuffer.Ptr, this.stubBuffer.size)
-            NumPut("UInt", 0x3153434D,            ; MAGIC (MCS1)
-                   "UInt", 0,                     ; flags (0)
-                   "UInt", this.importCount,      ; n_imports
-                   "UInt", this.VACount,          ; n_va
-                   "UInt", this.stubBuffer.size,  ; payload_rva
-                   "UInt", this.mcodeSize,        ; payload_size
-                   "UInt", this.imp_RVA,          ; imp_rva
-                   "UInt", this.VA_RVA,           ; va_rva
-                   "UInt", this.pool_RVA,         ; pool_rva
-                   "UInt", this.IAT_RVA,          ; iat_rva
-                   "UInt", this.entryPoint,       ; entry_rva (0 для MCode, иначе смещение внутри Payload)
-                FinalBlob)
-
-            RtlMoveMemory(FinalBlob.Ptr + this.stubBuffer.size, this.mcodeBuffer.Ptr, this.mcodeSize)
-
-            current_pool_offset := 0
-            poolOffsets := Map()
-            for i, imp in this.buildRulesObj.IAT {
-                o := this.imp_RVA + ((i - 1) * MCF_Builder.Blob.SIZEOF_IMP_REC)
-
-                if (!poolOffsets.Has(imp.Dll)) {
-                    StrPut(imp.Dll, FinalBlob.Ptr + this.pool_RVA + current_pool_offset, "CP0")
-                    poolOffsets[imp.Dll] := current_pool_offset
-                    current_pool_offset += StrPut(imp.Dll, "CP0")
-                }
-                NumPut("UInt", poolOffsets[imp.Dll], FinalBlob.Ptr + 0 + o)
-
-                if (IsInteger(imp.ExportFunc)) {
-                    NumPut("UInt", imp.ExportFunc, FinalBlob.Ptr + 4 + o)
-                } else {
-                    if (!poolOffsets.Has(imp.ExportFunc)) {
-                        StrPut(imp.ExportFunc, FinalBlob.Ptr + this.pool_RVA + current_pool_offset, "CP0")
-                        poolOffsets[imp.ExportFunc] := current_pool_offset
-                        current_pool_offset += StrPut(imp.ExportFunc, "CP0")
-                    }
-                    NumPut("UInt", poolOffsets[imp.ExportFunc], FinalBlob.Ptr + 4 + o)
-                }
-
-                NumPut("UInt",  imp.PatchOffset, FinalBlob.Ptr + 8  + o)
-                NumPut("UInt",  imp.Disp,        FinalBlob.Ptr + 12 + o)
-                NumPut("UChar", IsInteger(imp.ExportFunc), FinalBlob.Ptr + 16 + o)
-            }
-
-            for i, va_data in this.buildRulesObj.VA {
-                o := this.VA_RVA + ((i - 1) * MCF_Builder.Blob.SIZEOF_VA_REC)
-                NumPut("UInt",  va_data.Offset, FinalBlob.Ptr + 0 + o)
-                NumPut("UChar", va_data.Size,   FinalBlob.Ptr + 4 + o)
-            }
-
-            return FinalBlob
-        }
-
-
-        GetStringPoolSize() {
-            stringPoolSize := 0
-            seen := Map()
-            for imp in this.buildRulesObj.IAT {
-                if (!seen.Has(imp.Dll)) {
-                    stringPoolSize += StrPut(imp.Dll, "CP0")
-                    seen[imp.Dll] := true
-                }
-                if (!IsInteger(imp.ExportFunc) && !seen.Has(imp.ExportFunc)) {
-                    stringPoolSize += StrPut(imp.ExportFunc, "CP0")
-                    seen[imp.ExportFunc] := true
-                }
-            }
-            return stringPoolSize
-        }
-    }
-
+class MCF_Blob extends COFF {
     static BUILD_AHK_MCODE           := 1 ; Привязан к языку "ahk v2" (требуется функция загрузчик "GetMcodePtr" - суммарно меньше байт).
     static BUILD_PIC_SHELLCODE       := 2 ; Обычный Shellcode со своей точкой входа.
     static BUILD_PIC_MCODE_LIBRARIES := 3 ; Тоже самое что и AHK_MCODE, но только не зависит от языка (произвольный вызов функций в отличии от Shellcode).
@@ -1469,29 +1505,203 @@ class MCF_Builder {
     static BUILD_DLL                 := 5 ; Обычный PE Dll (не реализовано).
     static BUILD_FROM_CACHE          := 6 ; Сборка из json правил + bin (не реализовано).
 
+    static SIZEOF_BLOB_HDR := 64
+    static SIZEOF_IMP_REC  := 17
+    static SIZEOF_VA_REC   := 5
+
+    ; MCF 1.0.7
+    ; TDM-GCC 10.3.0
+    ; -m64 -Os -fPIC -nostdlib -fno-ident -fomit-frame-pointer -fno-stack-protector -fno-asynchronous-unwind-tables -falign-functions=1 -falign-jumps=1 -falign-loops=1 -Wl,--build-id=none
+    ; offset["sc_main"] := ptr + 0x100 ;
+    ; offset["sc_start"] := ptr + 0x0 ;
+    static stub_x64 := "
+    (
+    00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e800000000594883e945e9a000000031c088140148ffc048
+    c1ea084883f80875f031c0448844010848ffc049c1e8084883f80875eec38b413c4989d08b94018800000031c085d274654801ca575653448b4a208b7a184901c939c7764b458b1c814531d24901cb4489d3418a341b418a
+    1c184084f6740a4038de752741ffc2ebe684db751e448b42244801c04801c8460fb704008b421c4a8d14818b04024801c8eb0748ffc0ebb131c05b5e5fc3c34157415641554154555756534883ec7881394d4353310f857f
+    0100008b41044531e44889cb83e0018944242c0f85400100008b411c4c8d7c24608b691049b865006c003300320048ba6b00650072006e008b71248b7918448b61204c89f989442448e8f9feffff65488b04256000000048
+    8b40184c8d4020488b40204885c00f841f0100004939c00f8416010000668378480f76214c8b485031d266418b0c1183c92066413b0c17750c4883c2024883fa1075e7eb05488b00ebc14c8b68204d85ed0f84dc0000004c
+    8d54245041b86172794148ba4c6f61644c6962724c89d1e87bfeffff4c89f949b8646472657373000048ba47657450726f6341e85ffeffff4c89d24c89e9e87bfeffff4c89fa4989c6e870feffff4989c74d85f60f846e01
+    00004885c00f846501000089f84189e94801de4531ed48894424384a8d04234a8d2c0b4531e448894424304183caff31c944396b0877578b4c24488b44242c39430c0f87ff0000004585e47504834b04018b432885c00f84
+    1a0100004585e40f85110100004883c4784801d85b5e5f5d415c415d415e415fffe04183ccffe9f300000041bcfeffffffe9e80000004489ef486bff1148037c24384801df8b074439d0741089c148034c243041ffd6448b
+    174889c14885c974328b4704488b542430448954244c48894c24404801c2807f1000480f45d041ffd7488b4c2440448b54244c4885c04889c2750541ffc4eb4f8b47084801e8448a48ff458d59184180fb01772566c706ff
+    254989f34883c610c746f200000000488956f68b570c4801c24929d3448918eb164889168b570c4989f34883c6084801c24929d344891841ffc5e9eafeffff8b44242c488d04804801c84801d88b104801ea807804087505
+    48012aeb02012aff44242ce9cbfeffff41bcfdffffff4883c4784489e05b5e5f5d415c415d415e415fc3909090909090
+    )"
+
+    ; MCF 1.0.7
+    ; TDM-GCC 10.3.0
+    ; -m32 -Os -fPIC -nostdlib -fno-ident -fomit-frame-pointer -fno-stack-protector -fno-asynchronous-unwind-tables -falign-functions=1 -falign-jumps=1 -falign-loops=1 -Wl,--build-id=none
+    ; offset["_sc_main"] := ptr + 0x105 ; 
+    ; offset["sc_start"] := ptr + 0x0 ; 
+    static stub_x86 := "
+    (
+    00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e8000000005883e84550e8b600000083c404c35756538b74
+    241089c389d08b7c241489ca31c988040b410facd008c1ea0883f90875f031c089f20facfe088854030840c1ef0883f80875ed5b5e5fc35589d557565383ec0c8b503c8b74107885f6745801c631d28b4e208b7e1801c189
+    3c24894c24083b142474408b4c240831ff8b1c9101c3895c24048b5c24048a4c3d008a1c3b84db740738cb751b47ebea84c9751401d201c20356240fb7128d149003561c0302eb0542ebbb31c083c40c5b5e5f5dc3555756
+    5383ec6c8bac2480000000817d004d4353310f859f0100008b450431ff83e001894424180f856f0100008b45108d5c2450ba6b006500b972006e00894424108b4524894424148b4518894424208b451c894424348b4520c7
+    042465006c00c7442404330032008944242489d8e8dafeffff64a1300000008b400c8d701c8b401c85c00f843701000039c60f842f010000668378280f761a8b782c31d2668b0c5783c920663b0c5375084283fa0875edeb
+    048b00ebcb8b701085f60f84ff000000c7042461727941ba4c6f6164b94c6962728d442440c744240400000000e869feffffc7042464647265b9726f634189d8c744240473730000ba47657450e849feffff8d54244089f0
+    e87afeffff89da8944242c89f0e86dfeffff837c242c00894424300f845801000085c00f84500100008b4424108b5c2420c7442420ffffffff31ff01e801eb894424108b442414c74424140000000001e88944241c8b4424
+    24c74424240000000001e8894424288b44242439450877518b4c24348b44241031d201e98b74241839750c0f87cb00000085ff7504834d04018b452885c00f84e200000085ff0f85da00000083c46c01e85b5e5f5dffe083
+    cfffe9c7000000bffeffffffe9bd0000008b033b4424207418034424288904248b44242cffd051894424148b0389442420837c24140074278b53048b44242801d0807b10000f45c2894424048b4424148904248b442430ff
+    d0525285c0750347eb368b7424100373088a56ff83c21880fa0177198b4b0cc744243c0000000001f1894c24382b4424388906eb0b8b4c241c8344241c048901ff44242483c311e913ffffff8b5c24100319807904087507
+    0103115304eb068b7424100133ff44241883c105e903ffffffbffdffffff83c46c89f85b5e5f5dc3
+    )"
+
+
     __New(obj, importDll, ignoreSections, fullOffsetTable, dynamicLinking, staticLibraries, dynamicSubstitution, staticSubstitution, useOrdinals, usePEParser, demangleLvl := 1, languageFormat := "AHK", entryPoint := "mainA") {
-        this.demangleLvl    := demangleLvl    ; Деманглирование символов в таблице смещений. (1 - только имнна, 2 - только сигнатуры, 3 - имена + сиги).
-        this.languageFormat := languageFormat ; AHK | C / C++ (меняется вывод самого Mcode + таблицы смещений).
-        this.entryPoint     := entryPoint     ; Пользовательский символ (или ручное смещение "цифра") который будет являться точкой входа (кроме "main", ибо это слово зарезервировано компилятором).
+        super.__New(obj, importDll, ignoreSections, fullOffsetTable, dynamicLinking, staticLibraries, dynamicSubstitution, staticSubstitution, useOrdinals, usePEParser)
+        __mcodeObj := this.Linker()
 
-        this.coffObj    := COFF(obj, importDll, ignoreSections, fullOffsetTable, dynamicLinking, staticLibraries, dynamicSubstitution, staticSubstitution, useOrdinals, usePEParser)
-        this.__mcodeObj := this.coffObj.Linker()
+        this.mcodeBuffer     := __mcodeObj.Mcode
+        this.mcodeBuildRules := __mcodeObj.McodeBuildRules
+        this.otherDbgInfo    := "" ; Прочая dbg info (оповещения о сборки X формата Mcode)
 
-        this.McodeRaw        := this.__mcodeObj.Mcode
-        this.McodeBuildRules := this.__mcodeObj.McodeBuildRules
-        this.OtherDbgInfo    := "" ; Прочая dbg info (оповещения о сборки X формата Mcode)
+        this.demangleLvl    := demangleLvl              ; Деманглирование символов в таблице смещений. (1 - только имнна, 2 - только сигнатуры, 3 - имена + сиги).
+        this.languageFormat := StrLower(languageFormat) ; AHK | C / C++ (меняется вывод самого Mcode + таблицы смещений).
+        this.entryPoint     := entryPoint               ; Пользовательский символ (или ручное смещение "цифра") который будет являться точкой входа (кроме "main", ибо это слово зарезервировано компилятором).
+
+        this.VA_size          := this.is64 ? 8 : 4
+        this.stubBuffer       := Binary.StringToBinary(RegExReplace(this.is64 ? MCF_Blob.stub_x64 : MCF_Blob.stub_x86, "\s+"), 12)
+        this.importCount      := this.mcodeBuildRules.IAT.Length
+        this.VACount          := this.mcodeBuildRules.VA.Length
+        this.IATSize          := this.importCount * (this.is64 ? 16 : 4)
+        this.imp_RVA          := this.stubBuffer.size + this.mcodeBuffer.Size
+        this.VA_RVA           := this.imp_RVA + (this.importCount * MCF_Blob.SIZEOF_IMP_REC)
+        this.pool_RVA         := this.VA_RVA + (this.VACount * MCF_Blob.SIZEOF_VA_REC)
+        this.IAT_RVA          := this.pool_RVA + this.GetStringPoolSize()
+        this.totalSize        := this.IAT_RVA + this.IATSize
+        this.Payload_RVA      := this.stubBuffer.size ; DllCall(Ptr + Payload_RVA + offset)
+
+        ; mcodeBuildRules -> {IAT: [{Disp, Dll, ExportFunc, PatchOffset}], VA: [{Offset, Size}], Ctors: [], Dtors: []}
     }
 
 
     AutoBuild(buildFormat) {
         switch (buildFormat) {
-            case MCF_Builder.BUILD_AHK_MCODE           : return this.AHKMcode()
-            case MCF_Builder.BUILD_PIC_SHELLCODE       : return this.PICShellcode()
-            case MCF_Builder.BUILD_PIC_MCODE_LIBRARIES : return this.PICMcodeLibrary()
-            case MCF_Builder.BUILD_EXE                 : return this.Exe()
-            case MCF_Builder.BUILD_DLL                 : return this.Dll()
-            case MCF_Builder.BUILD_FROM_CACHE          : return this.JsonCache()
-            default                                    : throw Error("AutoBuild: Unsupported build type...")
+            case MCF_Blob.BUILD_AHK_MCODE           : return this.AHKMcode()
+            case MCF_Blob.BUILD_PIC_SHELLCODE       : return this.PICShellcode()
+            case MCF_Blob.BUILD_PIC_MCODE_LIBRARIES : return this.PICMcodeLibrary()
+            case MCF_Blob.BUILD_EXE                 : return this.Exe()
+            case MCF_Blob.BUILD_DLL                 : return this.Dll()
+            case MCF_Blob.BUILD_FROM_CACHE          : return this.JsonCache()
+            default                                 : throw Error("Build: Unsupported build type...")
+        }
+    }
+
+
+    Build(entryPoint := 0) {
+        if (this.mcodeBuildRules.IAT.Length == 0 && this.mcodeBuildRules.VA.Length == 0) { ; && this.mcodeBuildRules.Ctors.Length == 0
+            this.Payload_RVA := 0
+            return this.mcodeBuffer ; Если Mcode и так PIC, то нет смысла тянуть стаб
+        }
+
+        FinalBlob := Buffer(this.totalSize, 0)
+        RtlMoveMemory(FinalBlob.Ptr, this.stubBuffer.Ptr, this.stubBuffer.Size)
+        NumPut("UInt", 0x3153434D,             ; MAGIC (MCS1)
+                "UInt", 0,                     ; flags (0)
+                "UInt", this.importCount,      ; n_imports
+                "UInt", this.VACount,          ; n_va
+                "UInt", this.stubBuffer.Size,  ; payload_rva
+                "UInt", this.mcodeBuffer.Size, ; payload_size
+                "UInt", this.imp_RVA,          ; imp_rva
+                "UInt", this.VA_RVA,           ; va_rva
+                "UInt", this.pool_RVA,         ; pool_rva
+                "UInt", this.IAT_RVA,          ; iat_rva
+                "UInt", entryPoint,            ; entry_rva (0 для MCode, иначе смещение внутри Payload)
+            FinalBlob)
+
+        RtlMoveMemory(FinalBlob.Ptr + this.stubBuffer.Size, this.mcodeBuffer.Ptr, this.mcodeBuffer.Size)
+
+        current_pool_offset := 0
+        poolOffsets := Map()
+        for i, imp in this.mcodeBuildRules.IAT {
+            o := this.imp_RVA + ((i - 1) * MCF_Blob.SIZEOF_IMP_REC)
+
+            if (!poolOffsets.Has(imp.Dll)) {
+                StrPut(imp.Dll, FinalBlob.Ptr + this.pool_RVA + current_pool_offset, "CP0")
+                poolOffsets[imp.Dll] := current_pool_offset
+                current_pool_offset += StrPut(imp.Dll, "CP0")
+            }
+            NumPut("UInt", poolOffsets[imp.Dll], FinalBlob.Ptr + 0 + o)
+
+            if (IsInteger(imp.ExportFunc)) {
+                NumPut("UInt", imp.ExportFunc, FinalBlob.Ptr + 4 + o)
+            } else {
+                if (!poolOffsets.Has(imp.ExportFunc)) {
+                    StrPut(imp.ExportFunc, FinalBlob.Ptr + this.pool_RVA + current_pool_offset, "CP0")
+                    poolOffsets[imp.ExportFunc] := current_pool_offset
+                    current_pool_offset += StrPut(imp.ExportFunc, "CP0")
+                }
+                NumPut("UInt", poolOffsets[imp.ExportFunc], FinalBlob.Ptr + 4 + o)
+            }
+
+            NumPut("UInt",  imp.PatchOffset, FinalBlob.Ptr + 8  + o)
+            NumPut("UInt",  imp.Disp,        FinalBlob.Ptr + 12 + o)
+            NumPut("UChar", IsInteger(imp.ExportFunc), FinalBlob.Ptr + 16 + o)
+        }
+
+        for i, va_data in this.mcodeBuildRules.VA {
+            o := this.VA_RVA + ((i - 1) * MCF_Blob.SIZEOF_VA_REC)
+            NumPut("UInt",  va_data.Offset, FinalBlob.Ptr + 0 + o)
+            NumPut("UChar", va_data.Size,   FinalBlob.Ptr + 4 + o)
+        }
+
+        return FinalBlob
+    }
+
+
+    GetStringPoolSize() {
+        stringPoolSize := 0
+        seen := Map()
+        for imp in this.mcodeBuildRules.IAT {
+            if (!seen.Has(imp.Dll)) {
+                stringPoolSize += StrPut(imp.Dll, "CP0")
+                seen[imp.Dll] := true
+            }
+            if (!IsInteger(imp.ExportFunc) && !seen.Has(imp.ExportFunc)) {
+                stringPoolSize += StrPut(imp.ExportFunc, "CP0")
+                seen[imp.ExportFunc] := true
+            }
+        }
+        return stringPoolSize
+    }
+
+
+    AsmTailSize(isShellcode := true) {
+        if (this.is64) {
+            if (isShellcode) {
+                return 13 + (this.mcodeBuildRules.Ctors.Length * 5) ; ([sub rsp, 40] + [add rsp, 40] + [call E9]) + (Ctors.Size * [E8 xx xx xx xx Ctors[RVA]])
+            } else {
+                return 9 + (this.mcodeBuildRules.Ctors.Length * 5)  ; ([sub rsp, 40] + [add rsp, 40] + [ret C3]) + (Ctors.Size * [E8 xx xx xx xx Ctors[RVA]])
+            }
+        } else {
+            if (isShellcode) {
+                return 5 + (this.mcodeBuildRules.Ctors.Length * 5) ; ([call E9]) + (Ctors.Size * [E8 xx xx xx xx Ctors[RVA]])
+            } else {
+                return 1 + (this.mcodeBuildRules.Ctors.Length * 5) ; ([ret C3]) + (Ctors.Size * [E8 xx xx xx xx Ctors[RVA]])
+            }
+        }
+    }
+
+
+    SearchEntryPoint() {
+        for i, sym in this.exportedSymbols {
+            if (this.entryPoint is String && sym.symbol == this.entryPoint) {
+                if (sym.symbol == "main") {
+                    this.otherDbgInfo .= 'ERROR: You cannot use the symbol "main" as an entry point, as it is reserved by the compiler. Please change it to something else of your choosing.`n'
+                    return 0
+                }
+                this.otherDbgInfo .= 'Entry point successfully set "' sym.symbol ' -> ' Format("0x{:X}", sym.offset + this.Payload_RVA) '"`nThe assembly was successful!`n'
+                return sym.offset + this.Payload_RVA
+            } else if (IsInteger(this.entryPoint)) {
+                this.otherDbgInfo .= "Entry point successfully set... This is the number " Format("0x{:X}", this.entryPoint) ". This is acceptable. However, ensure that it is a valid offset.`nThe assembly was successful!`n"
+                return this.entryPoint
+            } else {
+                this.otherDbgInfo .= 'ERROR: Entry point "' this.entryPoint '" not found. In the settings window, specify the actual symbol name that will serve as YOUR entry point, or the offset (number).`n'
+                return 0
+            }
         }
     }
 
@@ -1509,13 +1719,13 @@ class MCF_Builder {
         }
 
         dataTail          := RTrim(dataTail, "|")
-        ret.hex           := Binary.BinaryToStrin(this.McodeRaw, this.McodeRaw.Size, 12)           . dataTail
-        ret.base64        := Binary.BinaryToStrin(this.McodeRaw, this.McodeRaw.Size, 1)            . dataTail
-        ret.compress      := Binary.BinaryToCompressedBase64(this.McodeRaw, this.McodeRaw.Size, 2) . dataTail
-        ret.table         := Demangle.ExportedSymbolsDump(this.coffObj.exportedSymbols, this.demangleLvl, this.languageFormat, 0)
+        ret.hex           := Binary.BinaryToStrin(this.mcodeBuffer, this.mcodeBuffer.Size, 12)           . dataTail
+        ret.base64        := Binary.BinaryToStrin(this.mcodeBuffer, this.mcodeBuffer.Size, 1)            . dataTail
+        ret.compress      := Binary.BinaryToCompressedBase64(this.mcodeBuffer, this.mcodeBuffer.Size, 2) . dataTail
+        ret.table         := Demangle.ExportedSymbolsDump(this.exportedSymbols, this.demangleLvl, this.languageFormat, 0)
         this.OtherDbgInfo .= 'The assembly was successful!'
-        ret.dbg.ALL       := this.coffObj.dbgLogInfo
-        ret.dbg.short     := this.coffObj.shortDbgInfo
+        ret.dbg.ALL       := this.dbgLogInfo
+        ret.dbg.short     := this.shortDbgInfo
         ret.dbg.other     := this.OtherDbgInfo
 
         return ret
@@ -1526,15 +1736,13 @@ class MCF_Builder {
         ret               := {hex: "", base64: "", compress: "", table: "", dbg: {ALL: "", short: "", other: ""}}
         this.OtherDbgInfo .= 'You are assembling "PIC Shellcode"...`n'
 
-        b                 := MCF_Builder.Blob(this.McodeRaw, this.McodeBuildRules, this.coffObj.is64, 0)
-        b.entryPoint      := this.SearchEntryPoint(b.Payload_RVA)
-        finalBlob         := b.Build()
+        finalBlob         := this.Build(this.SearchEntryPoint())
         ret.hex           := Binary.BinaryToStrin(finalBlob, finalBlob.Size, 12)
         ret.base64        := Binary.BinaryToStrin(finalBlob, finalBlob.Size, 1)
         ret.compress      := Binary.BinaryToCompressedBase64(finalBlob, finalBlob.Size, 2)
-        ret.table         := Demangle.ExportedSymbolsDump(this.coffObj.exportedSymbols, this.demangleLvl, this.languageFormat, b.Payload_RVA)
-        ret.dbg.ALL       := this.coffObj.dbgLogInfo
-        ret.dbg.short     := this.coffObj.shortDbgInfo
+        ret.table         := Demangle.ExportedSymbolsDump(this.exportedSymbols, this.demangleLvl, this.languageFormat, this.Payload_RVA)
+        ret.dbg.ALL       := this.dbgLogInfo
+        ret.dbg.short     := this.shortDbgInfo
         ret.dbg.other     := this.OtherDbgInfo
 
         return ret
@@ -1545,15 +1753,14 @@ class MCF_Builder {
         ret               := {hex: "", base64: "", compress: "", table: "", dbg: {ALL: "", short: "", other: ""}}
         this.otherDbgInfo .= 'You are assembling "PIC Mcode Library"...`n'
 
-        b                 := MCF_Builder.Blob(this.McodeRaw, this.McodeBuildRules, this.coffObj.is64, 0)
-        finalBlob         := b.Build()
+        finalBlob         := this.Build(0)
         ret.hex           := Binary.BinaryToStrin(finalBlob, finalBlob.Size, 12)
         ret.base64        := Binary.BinaryToStrin(finalBlob, finalBlob.Size, 1)
         ret.compress      := Binary.BinaryToCompressedBase64(finalBlob, finalBlob.Size, 2)
-        ret.table         := Demangle.ExportedSymbolsDump(this.coffObj.exportedSymbols, this.demangleLvl, this.languageFormat, b.Payload_RVA)
+        ret.table         := Demangle.ExportedSymbolsDump(this.exportedSymbols, this.demangleLvl, this.languageFormat, this.Payload_RVA)
         this.otherDbgInfo .= 'The assembly was successful!'
-        ret.dbg.ALL       := this.coffObj.dbgLogInfo
-        ret.dbg.short     := this.coffObj.shortDbgInfo
+        ret.dbg.ALL       := this.dbgLogInfo
+        ret.dbg.short     := this.shortDbgInfo
         ret.dbg.other     := this.OtherDbgInfo
 
         return ret
@@ -1573,24 +1780,71 @@ class MCF_Builder {
     JsonCache() {
         throw Error("JsonCache: Not implemented...")
     }
+}
 
 
-    SearchEntryPoint(Payload_RVA) {
-        for i, sym in this.coffObj.exportedSymbols {
-            if (this.entryPoint is String && sym.symbol == this.entryPoint) {
-                if (sym.symbol == "main") {
-                    this.otherDbgInfo .= 'ERROR: You cannot use the symbol "main" as an entry point, as it is reserved by the compiler. Please change it to something else of your choosing.`n'
-                    return 0
-                }
-                this.otherDbgInfo .= 'Entry point successfully set "' sym.symbol ' -> ' Format("0x{:X}", sym.offset + Payload_RVA) '"`nThe assembly was successful!`n'
-                return sym.offset + Payload_RVA
-            } else if (IsInteger(this.entryPoint)) {
-                this.otherDbgInfo .= "Entry point successfully set... This is the number " Format("0x{:X}", this.entryPoint) ". This is acceptable. However, ensure that it is a valid offset.`nThe assembly was successful!`n"
-                return this.entryPoint
-            } else {
-                this.otherDbgInfo .= 'ERROR: Entry point "' this.entryPoint '" not found. In the settings window, specify the actual symbol name that will serve as YOUR entry point, or the offset (number).`n'
-                return 0
+
+/*
+
+    ; PIC-трамплин (x64: 34 + 5*N байт | x86: 32 + 5*N байт) с защитой от повторного вызова
+    WriteTrampoline(mcode, baseOffset, callOffsets) {
+        n := callOffsets.Length
+        if (this.is64) {
+            tailOffset  := baseOffset + 28 + (5 * n)
+            guardOffset := tailOffset + 5
+
+            NumPut("UChar", 0x80, "UChar", 0x3D, "Int", guardOffset - (baseOffset + 7), "UChar", 0x00, mcode, baseOffset)       ; cmp byte ptr [rip + guard], 0 (7 байт)
+            NumPut("UChar", 0x0F, "UChar", 0x85, "Int", tailOffset - (baseOffset + 13), mcode, baseOffset + 7)                  ; jne tailOffset (6 байт)
+            NumPut("UChar", 0xC6, "UChar", 0x05, "Int", guardOffset - (baseOffset + 20), "UChar", 0x01, mcode, baseOffset + 13) ; mov byte ptr [rip + guard], 1 (7 байт)
+            NumPut("UChar", 0x48, "UChar", 0x83, "UChar", 0xEC, "UChar", 0x28, mcode, baseOffset + 20)                          ; sub rsp, 40 (4 байта, выравнивание стека + shadow space по Win64 ABI)
+
+            curPos := baseOffset + 24
+            for targetOffset in callOffsets {
+                NumPut("UChar", 0xE8, "Int", targetOffset - (curPos + 5), mcode, curPos)
+                curPos += 5
+            }
+
+            NumPut("UChar", 0x48, "UChar", 0x83, "UChar", 0xC4, "UChar", 0x28, mcode, curPos) ; add rsp, 40 (4 байта)
+        } else {
+            tailOffset  := baseOffset + 26 + (5 * n)
+            guardOffset := tailOffset + 5
+            guardDisp   := guardOffset - (baseOffset + 5)
+
+            
+            NumPut("UChar", 0xE8, "Int", 0, "UChar", 0x58, mcode, baseOffset)                                   ; call $+5; pop eax (6 байт -> в eax адрес baseOffset + 5)
+            NumPut("UChar", 0x80, "UChar", 0xB8, "Int", guardDisp, "UChar", 0x00, mcode, baseOffset + 6)        ; cmp byte ptr [eax + guardDisp], 0 (7 байт)
+            NumPut("UChar", 0x0F, "UChar", 0x85, "Int", tailOffset - (baseOffset + 19), mcode, baseOffset + 13) ; jne tailOffset (6 байт)
+            NumPut("UChar", 0xC6, "UChar", 0x80, "Int", guardDisp, "UChar", 0x01, mcode, baseOffset + 19)       ; mov byte ptr [eax + guardDisp], 1 (7 байт)
+
+            curPos := baseOffset + 26
+            for targetOffset in callOffsets {
+                NumPut("UChar", 0xE8, "Int", targetOffset - (curPos + 5), mcode, curPos)
+                curPos += 5
             }
         }
+
+        NumPut("UChar", 0x31, "UChar", 0xC0, "UChar", 0xC3, "UChar", 0x90, "UChar", 0x90, mcode, tailOffset) ; Tail Slot (5 байт): xor eax, eax; ret; nop; nop (в Shellcode патчится на jmp entryPoint)
+        NumPut("UChar", 0x00, mcode, guardOffset) ; Guard Byte (1 байт): 0 = не инициализировано, 1 = уже инициализировано
+
+        return {offset: baseOffset, tailOffset: tailOffset}
     }
-}
+
+    ; absPatchOffset := localToGlobalOffsets[i] + reloc.VirtualAddress ; No value was returned. []
+
+__init_ctors x64:
+sub rsp, 40  ; 48 83 EC 28 (shadow space x64)
+call ctor_1  ; E8 xx xx xx xx
+call ctor_2  ; E8 xx xx xx xx
+...
+add rsp, 40  ; 48 83 C4 28
+ret          ; C3 (or [E9 xx xx xx xx (JMP rel32)] for entry point "mainA")
+
+__init_ctors x86:
+call ctor_1  ; E8 xx xx xx xx
+call ctor_2  ; E8 xx xx xx xx
+...
+ret          ; C3 (or [E9 xx xx xx xx (JMP rel32)] for entry point "mainA")
+
+*/
+
+
